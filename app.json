@@ -50,7 +50,8 @@
         {
           "photosPermission": false,
           "savePhotosPermission": false,
-          "isAccessMediaLocationEnabled": true
+          "isAccessMediaLocationEnabled": true,
+          "accessMediaAudioPermission": "Sonora needs access to your audio files to play your music."
         }
       ]
     ],

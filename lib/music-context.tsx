@@ -116,10 +116,17 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return;
     }
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    setHasPermission(status === 'granted');
-    if (status === 'granted') {
-      await scanLibraryInternal();
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      setHasPermission(status === 'granted');
+      if (status === 'granted') {
+        await scanLibraryInternal();
+      }
+    } catch (err) {
+      console.warn('Media library permission not available, using demo data:', err);
+      setHasPermission(true);
+      setTracks(DEMO_TRACKS);
+      setIsLoading(false);
     }
   }, []);
 
@@ -170,7 +177,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return;
     }
-    await scanLibraryInternal();
+    try {
+      await scanLibraryInternal();
+    } catch (err) {
+      console.warn('Scan failed, using demo data:', err);
+      setTracks(DEMO_TRACKS);
+      setIsLoading(false);
+    }
   }, [scanLibraryInternal]);
 
   useEffect(() => {
@@ -185,11 +198,18 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         setTracks(DEMO_TRACKS);
         setIsLoading(false);
       } else {
-        const { status } = await MediaLibrary.getPermissionsAsync();
-        setHasPermission(status === 'granted');
-        if (status === 'granted') {
-          await scanLibraryInternal();
-        } else {
+        try {
+          const { status } = await MediaLibrary.getPermissionsAsync();
+          setHasPermission(status === 'granted');
+          if (status === 'granted') {
+            await scanLibraryInternal();
+          } else {
+            setIsLoading(false);
+          }
+        } catch (err) {
+          console.warn('Media library not available in Expo Go, using demo data:', err);
+          setHasPermission(true);
+          setTracks(DEMO_TRACKS);
           setIsLoading(false);
         }
       }

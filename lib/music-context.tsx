@@ -117,16 +117,28 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
       setHasPermission(status === 'granted');
       if (status === 'granted') {
         await scanLibraryInternal();
+      } else {
+        setIsLoading(false);
       }
     } catch (err) {
-      console.warn('Media library permission not available, using demo data:', err);
-      setHasPermission(true);
-      setTracks(DEMO_TRACKS);
-      setIsLoading(false);
+      console.warn('Granular audio permission failed, trying fallback:', err);
+      try {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        setHasPermission(status === 'granted');
+        if (status === 'granted') {
+          await scanLibraryInternal();
+        } else {
+          setIsLoading(false);
+        }
+      } catch (err2) {
+        console.warn('All media library permission attempts failed:', err2);
+        setHasPermission(false);
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -199,7 +211,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       } else {
         try {
-          const { status } = await MediaLibrary.getPermissionsAsync();
+          const { status } = await MediaLibrary.getPermissionsAsync(false, ['audio']);
           setHasPermission(status === 'granted');
           if (status === 'granted') {
             await scanLibraryInternal();
@@ -207,10 +219,20 @@ export function MusicProvider({ children }: { children: ReactNode }) {
             setIsLoading(false);
           }
         } catch (err) {
-          console.warn('Media library not available in Expo Go, using demo data:', err);
-          setHasPermission(true);
-          setTracks(DEMO_TRACKS);
-          setIsLoading(false);
+          console.warn('Granular getPermissions failed, trying fallback:', err);
+          try {
+            const { status } = await MediaLibrary.getPermissionsAsync();
+            setHasPermission(status === 'granted');
+            if (status === 'granted') {
+              await scanLibraryInternal();
+            } else {
+              setIsLoading(false);
+            }
+          } catch (err2) {
+            console.warn('All permission checks failed:', err2);
+            setHasPermission(false);
+            setIsLoading(false);
+          }
         }
       }
     };

@@ -30,7 +30,10 @@
       },
       "permissions": [
         "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION"
       ]
     },
     "web": {
@@ -52,13 +55,23 @@
           "savePhotosPermission": false,
           "isAccessMediaLocationEnabled": true,
           "accessMediaAudioPermission": "Sonora needs access to your audio files to play your music.",
-          "granularPermissions": ["audio"]
+          "granularPermissions": [
+            "audio"
+          ]
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {
+        "origin": "https://replit.com/"
+      },
+      "eas": {
+        "projectId": "c0f7f42e-da68-47a4-90ef-483a715b0e41"
+      }
     }
   }
 }

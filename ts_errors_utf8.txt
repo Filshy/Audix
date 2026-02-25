@@ -1,0 +1,5 @@
+﻿app/(tabs)/_layout.tsx(17,82): error TS2322: Type '{ sf: { default: "music.note.list"; selected: "music.note.list"; }; md: string; }' is not assignable to type 'IntrinsicAttributes & IconProps'.
+  Property 'md' does not exist on type '(IntrinsicAttributes & { selectedColor?: ColorValue | undefined; } & NamedIconCombination) | (IntrinsicAttributes & { ...; } & CrossPlatformIconCombination)'.
+app/(tabs)/_layout.tsx(21,38): error TS2322: Type '{ sf: "magnifyingglass"; md: string; }' is not assignable to type 'IntrinsicAttributes & IconProps'.
+  Property 'md' does not exist on type '(IntrinsicAttributes & { selectedColor?: ColorValue | undefined; } & NamedIconCombination) | (IntrinsicAttributes & { ...; } & CrossPlatformIconCombination)'.
+components/PermissionGate.tsx(96,8): error TS2367: This comparison appears to be unintentional because the types '"ios" | "android" | "macos" | "windows"' and '"web"' have no overlap.

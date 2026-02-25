@@ -28,13 +28,13 @@ export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlay
   }));
 
   const handlePressIn = () => {
-    scale.value = withSpring(0.97, { damping: 15, stiffness: 300 });
-    opacity.value = withSpring(0.8, { damping: 15, stiffness: 300 });
+    scale.value = withSpring(0.95, { damping: 12, stiffness: 400 });
+    opacity.value = withSpring(0.7, { damping: 12, stiffness: 400 });
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1, { damping: 15, stiffness: 300 });
-    opacity.value = withSpring(1, { damping: 15, stiffness: 300 });
+    scale.value = withSpring(1, { damping: 12, stiffness: 400 });
+    opacity.value = withSpring(1, { damping: 12, stiffness: 400 });
   };
 
   const handlePress = () => {

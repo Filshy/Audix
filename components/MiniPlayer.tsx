@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, PanResponder } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +25,21 @@ export function MiniPlayer() {
   const handlePlayPressOut = () => {
     playScale.value = withSpring(1, { damping: 15, stiffness: 300 });
   };
+
+  const panResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return gestureState.dy < -10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy < -15 || gestureState.vy < -0.5) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          router.push('/player/now-playing');
+        }
+      },
+    })
+  ).current;
 
   const isWeb = Platform.OS === 'web';
   const isIOS = Platform.OS === 'ios';
@@ -54,10 +69,16 @@ export function MiniPlayer() {
         <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
       </View>
       <View style={styles.content}>
-        <Pressable style={styles.trackInfo} onPress={handlePress}>
+        <Pressable
+          style={({ pressed }) => [styles.trackInfo, { opacity: pressed ? 0.5 : 1 }]}
+          onPress={handlePress}>
           <View style={styles.artworkContainer}>
             {currentTrack.artwork ? (
-              <Image source={{ uri: currentTrack.artwork }} style={styles.artwork} contentFit="cover" />
+              <Image
+                source={{ uri: currentTrack.artwork }}
+                style={styles.artwork}
+                contentFit="cover"
+              />
             ) : (
               <View style={styles.artworkPlaceholder}>
                 <Ionicons name="musical-note" size={16} color={Colors.primary} />
@@ -95,7 +116,7 @@ export function MiniPlayer() {
 
   if (isIOS) {
     return (
-      <Animated.View entering={SlideInDown.duration(300)} style={styles.container}>
+      <Animated.View entering={SlideInDown.duration(300)} style={styles.container} {...panResponder.panHandlers}>
         <BlurView intensity={80} tint="dark" style={styles.blurContainer}>
           {content}
         </BlurView>
@@ -104,7 +125,7 @@ export function MiniPlayer() {
   }
 
   return (
-    <Animated.View entering={SlideInDown.duration(300)} style={styles.container}>
+    <Animated.View entering={SlideInDown.duration(300)} style={styles.container} {...panResponder.panHandlers}>
       <View style={styles.solidContainer}>
         {content}
       </View>

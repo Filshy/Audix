@@ -39,11 +39,11 @@ export const AlbumCard = memo(function AlbumCard({ album, onPress }: AlbumCardPr
   }));
 
   const handlePressIn = () => {
-    scale.value = withSpring(0.95, { damping: 15, stiffness: 300 });
+    scale.value = withSpring(0.93, { damping: 12, stiffness: 400 });
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1, { damping: 15, stiffness: 300 });
+    scale.value = withSpring(1, { damping: 12, stiffness: 400 });
   };
 
   const handlePress = () => {

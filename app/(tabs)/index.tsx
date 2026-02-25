@@ -58,20 +58,26 @@ export default function LibraryScreen() {
   };
 
   const renderTrack = useCallback(({ item, index }: { item: Track; index: number }) => (
-    <TrackItem
-      track={item}
-      index={index}
-      onPress={handleTrackPress}
-      isPlaying={currentTrack?.id === item.id}
-    />
+    <Animated.View entering={FadeInDown.delay(Math.min(index * 50, 500)).springify()}>
+      <TrackItem
+        track={item}
+        index={index}
+        onPress={handleTrackPress}
+        isPlaying={currentTrack?.id === item.id}
+      />
+    </Animated.View>
   ), [currentTrack, handleTrackPress]);
 
   const renderAlbum = useCallback(({ item, index }: { item: Album; index: number }) => (
-    <AlbumCard album={item} onPress={handleAlbumPress} />
+    <Animated.View entering={FadeInDown.delay(Math.min(index * 50, 500)).springify()}>
+      <AlbumCard album={item} onPress={handleAlbumPress} />
+    </Animated.View>
   ), [handleAlbumPress]);
 
   const renderArtist = useCallback(({ item, index }: { item: Artist; index: number }) => (
-    <ArtistRow artist={item} onPress={handleArtistPress} />
+    <Animated.View entering={FadeInDown.delay(Math.min(index * 50, 500)).springify()}>
+      <ArtistRow artist={item} onPress={handleArtistPress} />
+    </Animated.View>
   ), [handleArtistPress]);
 
   return (

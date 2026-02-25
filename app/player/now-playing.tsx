@@ -52,7 +52,7 @@ export default function NowPlayingScreen() {
   const [bgColor, setBgColor] = useState(Colors.tidalMagenta);
 
   useEffect(() => {
-    if (!currentTrack?.artwork) {
+    if (!currentTrack?.artwork || typeof currentTrack.artwork !== 'string') {
       setBgColor(Colors.tidalMagenta);
       return;
     }
@@ -145,14 +145,49 @@ export default function NowPlayingScreen() {
     toggleRepeat();
   };
 
+  const swipeDownResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Intercept downward swipes
+        return gestureState.dy > 15 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 25 || gestureState.vy > 0.5) {
+          router.back();
+        }
+      },
+    })
+  ).current;
+
   return (
     <View style={styles.container}>
+      {/* Blurred Artwork Background */}
+      {currentTrack?.artwork && (
+        <Image
+          source={{ uri: currentTrack.artwork }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+        />
+      )}
+
+      {/* Blur Overlay - makes the artwork very soft */}
+      {currentTrack?.artwork && (
+        <BlurView
+          intensity={120}
+          tint="dark"
+          style={StyleSheet.absoluteFill}
+        />
+      )}
+
+      {/* Dominant Color Gradient Overlay for depth and text legibility */}
       <LinearGradient
-        colors={[bgColor, Colors.tidalPurple, Colors.background]}
-        locations={[0, 0.45, 0.9]}
-        style={StyleSheet.absoluteFill}
+        colors={[bgColor, 'transparent', Colors.background]}
+        locations={[0, 0.4, 1]}
+        style={[StyleSheet.absoluteFill, { opacity: 0.8 }]}
       />
-      <View style={[styles.mainLayout, { paddingTop: topInset }]}>
+
+      <View style={[styles.mainLayout, { paddingTop: topInset }]} {...swipeDownResponder.panHandlers}>
 
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} hitSlop={12} style={styles.topBarIconLeft}>
@@ -176,7 +211,11 @@ export default function NowPlayingScreen() {
           <View style={styles.artworkSection}>
             <View style={styles.artworkContainer}>
               {currentTrack.artwork ? (
-                <Image source={{ uri: currentTrack.artwork }} style={styles.artwork} contentFit="cover" />
+                <Image
+                  source={{ uri: currentTrack.artwork }}
+                  style={styles.artwork}
+                  contentFit="cover"
+                />
               ) : (
                 <LinearGradient
                   colors={[Colors.surfaceHighlight, Colors.surface]}
@@ -214,6 +253,7 @@ export default function NowPlayingScreen() {
                     currentTrack.format?.toUpperCase(),
                     currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null,
                     currentTrack.sampleRate ? `${(currentTrack.sampleRate / 1000).toFixed(1)} kHz` : null,
+                    currentTrack.bitDepth ? `${currentTrack.bitDepth}-bit` : null,
                   ].filter(Boolean).join('  •  ')}
                 </Text>
               </View>
@@ -226,7 +266,8 @@ export default function NowPlayingScreen() {
               <Text style={styles.timeText}>{formatDuration(duration)}</Text>
             </View>
             <Pressable
-              style={styles.progressBarContainer}
+              style={({ pressed }) => [styles.progressBarContainer, { opacity: pressed ? 0.8 : 1 }]}
+              hitSlop={{ top: 16, bottom: 16 }}
               onPressIn={(e) => {
                 const { locationX } = e.nativeEvent;
                 handleSeekStart(locationX, SCREEN_WIDTH - 48);
@@ -245,7 +286,11 @@ export default function NowPlayingScreen() {
           </View>
 
           <View style={styles.controlsSection}>
-            <Pressable onPress={handleToggleShuffle} hitSlop={12}>
+            <Pressable
+              onPress={handleToggleShuffle}
+              hitSlop={16}
+              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+            >
               <Ionicons
                 name="shuffle"
                 size={24}
@@ -253,7 +298,11 @@ export default function NowPlayingScreen() {
               />
             </Pressable>
 
-            <Pressable onPress={handleSkipPrevious} hitSlop={12}>
+            <Pressable
+              onPress={handleSkipPrevious}
+              hitSlop={16}
+              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+            >
               <Ionicons name="play-skip-back" size={32} color={Colors.text} />
             </Pressable>
 
@@ -269,11 +318,19 @@ export default function NowPlayingScreen() {
               />
             </Pressable>
 
-            <Pressable onPress={handleSkipNext} hitSlop={12}>
+            <Pressable
+              onPress={handleSkipNext}
+              hitSlop={16}
+              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+            >
               <Ionicons name="play-skip-forward" size={32} color={Colors.text} />
             </Pressable>
 
-            <Pressable onPress={handleToggleRepeat} hitSlop={12}>
+            <Pressable
+              onPress={handleToggleRepeat}
+              hitSlop={16}
+              style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+            >
               <Ionicons
                 name={repeatMode === 'one' ? 'repeat' : 'repeat'}
                 size={24}
@@ -289,9 +346,6 @@ export default function NowPlayingScreen() {
 
           <View style={styles.bottomSection}>
             <Ionicons name="tv-outline" size={24} color={Colors.tidalGray} />
-            <View style={styles.hifiBadge}>
-              <Text style={styles.hifiText}>HIFI</Text>
-            </View>
             <Ionicons name="ellipsis-horizontal" size={24} color={Colors.tidalGray} />
           </View>
         </ScrollView>
@@ -496,18 +550,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-  },
-  hifiBadge: {
-    backgroundColor: 'rgba(0, 255, 255, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  hifiText: {
-    color: Colors.tidalCyan,
-    fontSize: 10,
-    fontFamily: 'Inter_800ExtraBold',
-    letterSpacing: 1,
   },
   emptyContainer: {
     flex: 1,

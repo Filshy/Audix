@@ -5,7 +5,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules } from 'react-native';
 import { Track, Album, Artist, RepeatMode, getFormatFromFilename } from './types';
 import MusicInfo from 'expo-music-info-2';
-import * as FileSystem from 'expo-file-system/legacy'; function estimateAudioQuality(format: string, duration: number, fileSize?: number): { bitrate: number; sampleRate: number; bitDepth: number; channels: number } {
+import * as FileSystem from 'expo-file-system/legacy';
+import { cleanTrackTitle } from './utils';
+
+function estimateAudioQuality(format: string, duration: number, fileSize?: number): { bitrate: number; sampleRate: number; bitDepth: number; channels: number } {
   const fmt = format?.toUpperCase() || '';
 
   if (fileSize && duration > 0) {
@@ -157,7 +160,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     setIsFetchingMetadata(true);
 
     try {
-      const cachedStr = await AsyncStorage.getItem('track_metadata_v6');
+      const cachedStr = await AsyncStorage.getItem('track_metadata_v10');
       const cache: Record<string, any> = cachedStr ? JSON.parse(cachedStr) : {};
 
       const unfetched = trackList.filter(t => !cache[t.id] && !t.metadataFetched);
@@ -201,6 +204,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
           } else {
             for (const t of batch) {
               if (t.uri && !cache[t.id]) {
+                // @ts-ignore - The types for expo-music-info-2 are incorrect, it has this static method
                 const info = await MusicInfo.getMusicInfoAsync(t.uri, {
                   title: true,
                   artist: true,
@@ -208,37 +212,72 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                   picture: true
                 });
 
+                let cleanedTitle = cleanTrackTitle(info?.title || t.title);
+                let finalArtist = info?.artist || t.artist || '';
+                let artworkUri: string | null = null;
+
                 if (info) {
-                  console.log(`[MusicInfo] Extracted info for ${t.title}: HasPicture=${!!info.picture?.pictureData}, Len=${info.picture?.pictureData?.length || 0}`);
-                  let artworkUri: string | null = null;
+                  console.log(`[MusicInfo] Extracted info for ${cleanedTitle}: HasPicture=${!!info.picture?.pictureData}, Len=${info.picture?.pictureData?.length || 0}`);
+
+                  // 1. Try local embedded artwork
                   if (info.picture?.pictureData) {
                     const safeName = t.id.toString().replace(/[^a-zA-Z0-9]/g, '');
-                    const fileUri = `${FileSystem.documentDirectory}artwork_${safeName}.jpg`;
+                    const fileUri = `${FileSystem.documentDirectory}artwork_${safeName}_v10.jpg`;
                     try {
-                      const base64Data = info.picture.pictureData.replace(/^data:.*?;base64,/, '');
+                      let base64Data = info.picture.pictureData.split(',').pop() || '';
+                      // Remove any whitespaces/newlines/invalid chars that might corrupt the base64 payload
+                      base64Data = base64Data.replace(/[^A-Za-z0-9+/=]/g, '');
+
                       await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-                        encoding: 'base64',
+                        encoding: FileSystem.EncodingType.Base64,
                       });
                       artworkUri = fileUri;
                     } catch (e) {
-                      console.warn('Failed to save artwork to disk', e);
+                      console.warn('Failed to save embedded artwork to disk', e);
                     }
                   }
-
-                  cache[t.id] = {
-                    title: info.title,
-                    artist: info.artist,
-                    album: info.album,
-                    coverArt: artworkUri,
-                  };
-                } else {
-                  cache[t.id] = { _notFound: true };
                 }
+
+                // 2. Fallback to iTunes API if no embedded artwork is found (or if info extraction completely failed)
+                if (!artworkUri && cleanedTitle) {
+                  try {
+                    const query = encodeURIComponent(`${cleanedTitle} ${finalArtist}`.trim());
+                    const response = await fetch(`https://itunes.apple.com/search?term=${query}&entity=song&limit=1`);
+                    const data = await response.json();
+
+                    if (data.results && data.results.length > 0) {
+                      const result = data.results[0];
+                      // Get 600x600 high res image instead of 100x100
+                      const remoteArtworkUrl = result.artworkUrl100?.replace('100x100bb', '600x600bb');
+
+                      if (remoteArtworkUrl) {
+                        const safeName = t.id.toString().replace(/[^a-zA-Z0-9]/g, '');
+                        const fileUri = `${FileSystem.documentDirectory}artwork_itunes_${safeName}_v10.jpg`;
+
+                        const downloadResult = await FileSystem.downloadAsync(remoteArtworkUrl, fileUri);
+                        if (downloadResult.status === 200) {
+                          artworkUri = downloadResult.uri;
+                          console.log(`[iTunes] Successfully downloaded artwork for ${cleanedTitle}`);
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.warn(`[iTunes] Failed to fetch artwork for ${cleanedTitle}`, e);
+                  }
+                }
+
+                cache[t.id] = {
+                  title: cleanedTitle,
+                  artist: finalArtist,
+                  album: info?.album || '',
+                  coverArt: artworkUri,
+                  _notFound: !info && !artworkUri, // Only mark as truly not found if BOTH local extraction AND iTunes failed completely.
+                };
               }
             }
           }
 
-          await AsyncStorage.setItem('track_metadata_v6', JSON.stringify(cache));
+          await AsyncStorage.setItem('track_metadata_v10', JSON.stringify(cache));
 
           setTracks(prev => prev.map(t => {
             const c = cache[t.id];

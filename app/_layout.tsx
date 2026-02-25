@@ -25,8 +25,10 @@ function RootLayoutNav() {
       <Stack.Screen
         name="player/now-playing"
         options={{
-          presentation: 'fullScreenModal',
+          presentation: 'formSheet',
           animation: 'slide_from_bottom',
+          gestureEnabled: true,
+          gestureDirection: 'vertical',
         }}
       />
       <Stack.Screen

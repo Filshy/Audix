@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,22 +7,24 @@ import {
   Dimensions,
   Platform,
   ScrollView,
+  ImageBackground,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import ImageColors from 'react-native-image-colors';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { PanResponder } from 'react-native';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
-import { QualityInfo } from '@/components/QualityInfo';
 import { formatDuration, getQualityTier, getQualityLabel } from '@/lib/types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ARTWORK_SIZE = SCREEN_WIDTH - 80;
+const ARTWORK_SIZE = SCREEN_WIDTH - 48; // Edge-to-edge with slight padding
 
 export default function NowPlayingScreen() {
   const insets = useSafeAreaInsets();
@@ -45,9 +47,40 @@ export default function NowPlayingScreen() {
     toggleRepeat,
   } = useMusic();
 
-  const [showInfo, setShowInfo] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekPosition, setSeekPosition] = useState(0);
+  const [bgColor, setBgColor] = useState(Colors.tidalMagenta);
+
+  useEffect(() => {
+    if (!currentTrack?.artwork) {
+      setBgColor(Colors.tidalMagenta);
+      return;
+    }
+    const artworkUri = currentTrack.artwork;
+
+    const fetchColors = async () => {
+      try {
+        const result = await ImageColors.getColors(artworkUri, {
+          fallback: Colors.tidalMagenta,
+          cache: true,
+          key: artworkUri,
+        });
+
+        if (Platform.OS === 'android' && result.platform === 'android') {
+          setBgColor(result.vibrant || result.dominant || Colors.tidalMagenta);
+        } else if (Platform.OS === 'ios' && result.platform === 'ios') {
+          setBgColor(result.primary || result.background || Colors.tidalMagenta);
+        } else {
+          setBgColor(Colors.tidalMagenta);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch image colors', e);
+        setBgColor(Colors.tidalMagenta);
+      }
+    };
+
+    fetchColors();
+  }, [currentTrack?.artwork]);
 
   if (!currentTrack) {
     return (
@@ -113,158 +146,156 @@ export default function NowPlayingScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topInset }]}>
+    <View style={styles.container}>
       <LinearGradient
-        colors={[Colors.surfaceLight, Colors.background, Colors.background]}
+        colors={[bgColor, Colors.tidalPurple, Colors.background]}
+        locations={[0, 0.45, 0.9]}
         style={StyleSheet.absoluteFill}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 0.5 }}
       />
+      <View style={[styles.mainLayout, { paddingTop: topInset }]}>
 
-      <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Ionicons name="chevron-down" size={28} color={Colors.text} />
-        </Pressable>
-        <Text style={styles.topBarTitle}>NOW PLAYING</Text>
-        <Pressable onPress={() => setShowInfo(!showInfo)} hitSlop={12}>
-          <Ionicons
-            name={showInfo ? 'information-circle' : 'information-circle-outline'}
-            size={24}
-            color={showInfo ? Colors.primary : Colors.textSecondary}
-          />
-        </Pressable>
-      </View>
-
-      <ScrollView
-        style={styles.scrollContent}
-        contentContainerStyle={[styles.scrollContentContainer, { paddingBottom: bottomInset + 20 }]}
-        showsVerticalScrollIndicator={false}
-        bounces={true}
-      >
-        <View style={styles.artworkSection}>
-          <View style={styles.artworkContainer}>
-            {currentTrack.artwork ? (
-              <Image source={{ uri: currentTrack.artwork }} style={styles.artwork} contentFit="cover" />
-            ) : (
-              <LinearGradient
-                colors={[Colors.surfaceHighlight, Colors.surface]}
-                style={styles.artworkPlaceholder}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Ionicons name="musical-note" size={80} color={Colors.textTertiary} />
-              </LinearGradient>
-            )}
+        <View style={styles.topBar}>
+          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.topBarIconLeft}>
+            <Ionicons name="chevron-down" size={28} color={Colors.text} />
+          </Pressable>
+          <View style={styles.topBarCenter}>
+            <Text style={styles.topBarTitle}>NOW PLAYING</Text>
+            <Text style={styles.topBarSubtitle} numberOfLines={1}>{currentTrack.title}</Text>
           </View>
+          <Pressable hitSlop={12} style={styles.topBarIconRight}>
+            <Ionicons name="menu" size={24} color={Colors.text} />
+          </Pressable>
         </View>
 
-        <View style={styles.trackInfoSection}>
-          <View style={styles.trackTitleRow}>
-            <View style={styles.trackTitleInfo}>
-              <Text style={styles.trackTitle} numberOfLines={1}>{currentTrack.title}</Text>
-              <Text style={styles.trackArtist} numberOfLines={1}>{currentTrack.artist}</Text>
+        <ScrollView
+          style={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContentContainer, { paddingBottom: bottomInset + 20 }]}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.artworkSection}>
+            <View style={styles.artworkContainer}>
+              {currentTrack.artwork ? (
+                <Image source={{ uri: currentTrack.artwork }} style={styles.artwork} contentFit="cover" />
+              ) : (
+                <LinearGradient
+                  colors={[Colors.surfaceHighlight, Colors.surface]}
+                  style={styles.artworkPlaceholder}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Ionicons name="musical-note" size={80} color={Colors.textTertiary} />
+                </LinearGradient>
+              )}
             </View>
           </View>
 
-          <View style={styles.qualityRow}>
-            <View style={[styles.qualityPill, { backgroundColor: qualityColor + '20' }]}>
-              <Ionicons name="diamond" size={10} color={qualityColor} />
-              <Text style={[styles.qualityPillText, { color: qualityColor }]}>
-                {getQualityLabel(quality)}
-              </Text>
+          <View style={styles.trackInfoSection}>
+            <View style={styles.trackTitleRow}>
+              <View style={styles.trackTitleInfo}>
+                <Text style={styles.trackTitle} numberOfLines={1}>{currentTrack.title}</Text>
+                <Text style={styles.trackArtist} numberOfLines={1}>{currentTrack.artist}</Text>
+              </View>
+              <View style={styles.actionIconsRow}>
+                <Ionicons name="information-circle-outline" size={24} color={Colors.tidalGray} />
+                <Ionicons name="heart-outline" size={24} color={Colors.tidalGray} style={{ marginLeft: 16 }} />
+              </View>
             </View>
-            {currentTrack.format && (
-              <Text style={styles.formatText}>{currentTrack.format}</Text>
-            )}
-            {currentTrack.bitrate && (
-              <Text style={styles.formatText}>{currentTrack.bitrate} kbps</Text>
-            )}
-            {currentTrack.sampleRate && (
-              <Text style={styles.formatText}>{(currentTrack.sampleRate / 1000).toFixed(1)} kHz</Text>
-            )}
-          </View>
-        </View>
 
-        <View style={styles.progressSection}>
-          <Pressable
-            style={styles.progressBarContainer}
-            onPressIn={(e) => {
-              const { locationX } = e.nativeEvent;
-              handleSeekStart(locationX, SCREEN_WIDTH - 80);
-            }}
-            onResponderMove={(e) => {
-              const { locationX } = e.nativeEvent;
-              handleSeekMove(locationX, SCREEN_WIDTH - 80);
-            }}
-            onPressOut={handleSeekEnd}
-          >
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
-              <View style={[styles.progressKnob, { left: `${progress * 100}%` }]} />
+            <View style={styles.qualityRow}>
+              <View style={[styles.qualityPill, { backgroundColor: qualityColor }]}>
+                <Text style={styles.qualityPillText}>
+                  {getQualityLabel(quality).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.specsContainer}>
+                <Text style={styles.specsText}>
+                  {[
+                    currentTrack.format?.toUpperCase(),
+                    currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null,
+                    currentTrack.sampleRate ? `${(currentTrack.sampleRate / 1000).toFixed(1)} kHz` : null,
+                  ].filter(Boolean).join('  •  ')}
+                </Text>
+              </View>
             </View>
-          </Pressable>
-          <View style={styles.timeRow}>
-            <Text style={styles.timeText}>{formatDuration(isSeeking ? seekPosition : position)}</Text>
-            <Text style={styles.timeText}>{formatDuration(duration)}</Text>
           </View>
-        </View>
 
-        <View style={styles.controlsSection}>
-          <Pressable onPress={handleToggleShuffle} hitSlop={12}>
-            <Ionicons
-              name="shuffle"
-              size={22}
-              color={shuffle ? Colors.primary : Colors.textSecondary}
-            />
-          </Pressable>
+          <View style={styles.progressSection}>
+            <View style={styles.timeRow}>
+              <Text style={styles.timeText}>{formatDuration(isSeeking ? seekPosition : position)}</Text>
+              <Text style={styles.timeText}>{formatDuration(duration)}</Text>
+            </View>
+            <Pressable
+              style={styles.progressBarContainer}
+              onPressIn={(e) => {
+                const { locationX } = e.nativeEvent;
+                handleSeekStart(locationX, SCREEN_WIDTH - 48);
+              }}
+              onResponderMove={(e) => {
+                const { locationX } = e.nativeEvent;
+                handleSeekMove(locationX, SCREEN_WIDTH - 48);
+              }}
+              onPressOut={handleSeekEnd}
+            >
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
+                <View style={[styles.progressKnob, { left: `${progress * 100}%` }]} />
+              </View>
+            </Pressable>
+          </View>
 
-          <Pressable onPress={handleSkipPrevious} hitSlop={12}>
-            <Ionicons name="play-skip-back" size={30} color={Colors.text} />
-          </Pressable>
+          <View style={styles.controlsSection}>
+            <Pressable onPress={handleToggleShuffle} hitSlop={12}>
+              <Ionicons
+                name="shuffle"
+                size={24}
+                color={shuffle ? Colors.tidalCyan : Colors.text}
+              />
+            </Pressable>
 
-          <Pressable
-            onPress={handlePlayPause}
-            style={({ pressed }) => [styles.playButton, pressed && { transform: [{ scale: 0.93 }] }]}
-          >
-            <LinearGradient
-              colors={[Colors.primary, Colors.primaryDim]}
-              style={styles.playButtonGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+            <Pressable onPress={handleSkipPrevious} hitSlop={12}>
+              <Ionicons name="play-skip-back" size={32} color={Colors.text} />
+            </Pressable>
+
+            <Pressable
+              onPress={handlePlayPause}
+              style={({ pressed }) => [styles.playButton, pressed && { transform: [{ scale: 0.93 }] }]}
             >
               <Ionicons
                 name={isPlaying ? 'pause' : 'play'}
-                size={32}
-                color={Colors.background}
-                style={!isPlaying ? { marginLeft: 3 } : undefined}
+                size={48}
+                color={Colors.text}
+                style={!isPlaying ? { marginLeft: 6 } : undefined}
               />
-            </LinearGradient>
-          </Pressable>
+            </Pressable>
 
-          <Pressable onPress={handleSkipNext} hitSlop={12}>
-            <Ionicons name="play-skip-forward" size={30} color={Colors.text} />
-          </Pressable>
+            <Pressable onPress={handleSkipNext} hitSlop={12}>
+              <Ionicons name="play-skip-forward" size={32} color={Colors.text} />
+            </Pressable>
 
-          <Pressable onPress={handleToggleRepeat} hitSlop={12}>
-            <Ionicons
-              name={repeatMode === 'one' ? 'repeat' : 'repeat'}
-              size={22}
-              color={repeatMode !== 'off' ? Colors.primary : Colors.textSecondary}
-            />
-            {repeatMode === 'one' && (
-              <View style={styles.repeatOneBadge}>
-                <Text style={styles.repeatOneText}>1</Text>
-              </View>
-            )}
-          </Pressable>
-        </View>
-
-        {showInfo && (
-          <View style={styles.infoSection}>
-            <QualityInfo track={currentTrack} />
+            <Pressable onPress={handleToggleRepeat} hitSlop={12}>
+              <Ionicons
+                name={repeatMode === 'one' ? 'repeat' : 'repeat'}
+                size={24}
+                color={repeatMode !== 'off' ? Colors.tidalCyan : Colors.text}
+              />
+              {repeatMode === 'one' && (
+                <View style={styles.repeatOneBadge}>
+                  <Text style={styles.repeatOneText}>1</Text>
+                </View>
+              )}
+            </Pressable>
           </View>
-        )}
-      </ScrollView>
+
+          <View style={styles.bottomSection}>
+            <Ionicons name="tv-outline" size={24} color={Colors.tidalGray} />
+            <View style={styles.hifiBadge}>
+              <Text style={styles.hifiText}>HIFI</Text>
+            </View>
+            <Ionicons name="ellipsis-horizontal" size={24} color={Colors.tidalGray} />
+          </View>
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -272,7 +303,10 @@ export default function NowPlayingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#000',
+  },
+  mainLayout: {
+    flex: 1,
   },
   topBar: {
     flexDirection: 'row',
@@ -281,17 +315,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
+  topBarCenter: {
+    alignItems: 'center',
+    flex: 1,
+  },
   topBarTitle: {
-    color: Colors.textSecondary,
-    fontSize: 11,
+    color: Colors.tidalGray,
+    fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
-    letterSpacing: 2,
+    letterSpacing: 1.5,
+    marginBottom: 2,
+  },
+  topBarSubtitle: {
+    color: Colors.text,
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  topBarIconLeft: {
+    width: 40,
+    alignItems: 'flex-start',
+  },
+  topBarIconRight: {
+    width: 40,
+    alignItems: 'flex-end',
   },
   scrollContent: {
     flex: 1,
   },
   scrollContentContainer: {
-    paddingHorizontal: 40,
+    paddingHorizontal: 24,
   },
   artworkSection: {
     alignItems: 'center',
@@ -301,13 +353,13 @@ const styles = StyleSheet.create({
   artworkContainer: {
     width: ARTWORK_SIZE,
     height: ARTWORK_SIZE,
-    borderRadius: 16,
+    borderRadius: 8,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 20,
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.6,
+    shadowRadius: 30,
+    elevation: 24,
   },
   artwork: {
     width: ARTWORK_SIZE,
@@ -320,7 +372,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   trackInfoSection: {
-    gap: 8,
     marginBottom: 24,
   },
   trackTitleRow: {
@@ -331,40 +382,47 @@ const styles = StyleSheet.create({
   trackTitleInfo: {
     flex: 1,
     gap: 4,
+    paddingRight: 16,
   },
   trackTitle: {
     color: Colors.text,
-    fontSize: 22,
+    fontSize: 24,
     fontFamily: 'Inter_700Bold',
   },
   trackArtist: {
-    color: Colors.textSecondary,
+    color: Colors.tidalGray,
     fontSize: 16,
-    fontFamily: 'Inter_400Regular',
+    fontFamily: 'Inter_500Medium',
+  },
+  actionIconsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   qualityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
+    gap: 10,
+    marginTop: 12,
   },
   qualityPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
   },
   qualityPillText: {
-    fontSize: 10,
-    fontFamily: 'Inter_700Bold',
+    fontSize: 9,
+    fontFamily: 'Inter_800ExtraBold',
+    color: '#000',
     letterSpacing: 0.5,
   },
-  formatText: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
+  specsContainer: {
+    flex: 1,
+  },
+  specsText: {
+    color: Colors.tidalGray,
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.3,
   },
   progressSection: {
     marginBottom: 24,
@@ -374,49 +432,46 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   progressBarBg: {
-    height: 4,
-    backgroundColor: Colors.surfaceHighlight,
-    borderRadius: 2,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 1.5,
     position: 'relative',
   },
   progressBarFill: {
-    height: 4,
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
+    height: 3,
+    backgroundColor: Colors.text,
+    borderRadius: 1.5,
   },
   progressKnob: {
     position: 'absolute',
-    top: -4,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: Colors.primary,
-    marginLeft: -6,
+    top: -5,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: Colors.text,
+    marginLeft: -7,
   },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: -4,
   },
   timeText: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
+    color: Colors.tidalGray,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
   },
   controlsSection: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    marginBottom: 24,
+    marginBottom: 40,
+    marginTop: 10,
   },
   playButton: {
-    borderRadius: 32,
-    overflow: 'hidden',
-  },
-  playButtonGradient: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -424,7 +479,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -6,
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.tidalCyan,
     width: 14,
     height: 14,
     borderRadius: 7,
@@ -436,9 +491,23 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: 'Inter_700Bold',
   },
-  infoSection: {
-    paddingTop: 8,
-    paddingBottom: 24,
+  bottomSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+  },
+  hifiBadge: {
+    backgroundColor: 'rgba(0, 255, 255, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  hifiText: {
+    color: Colors.tidalCyan,
+    fontSize: 10,
+    fontFamily: 'Inter_800ExtraBold',
+    letterSpacing: 1,
   },
   emptyContainer: {
     flex: 1,

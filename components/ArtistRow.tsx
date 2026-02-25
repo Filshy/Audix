@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -11,7 +11,7 @@ interface ArtistRowProps {
   onPress: (artist: Artist) => void;
 }
 
-export function ArtistRow({ artist, onPress }: ArtistRowProps) {
+export const ArtistRow = memo(function ArtistRow({ artist, onPress }: ArtistRowProps) {
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onPress(artist);
@@ -40,7 +40,7 @@ export function ArtistRow({ artist, onPress }: ArtistRowProps) {
       <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

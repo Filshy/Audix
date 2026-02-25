@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
@@ -15,8 +16,26 @@ interface TrackItemProps {
   showQuality?: boolean;
 }
 
-export function TrackItem({ track, index, onPress, isPlaying, showIndex, showQuality = true }: TrackItemProps) {
+export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlaying, showIndex, showQuality = true }: TrackItemProps) {
   const quality = getQualityTier(track.bitrate, track.format?.toLowerCase());
+
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  const handlePressIn = () => {
+    scale.value = withSpring(0.97, { damping: 15, stiffness: 300 });
+    opacity.value = withSpring(0.8, { damping: 15, stiffness: 300 });
+  };
+
+  const handlePressOut = () => {
+    scale.value = withSpring(1, { damping: 15, stiffness: 300 });
+    opacity.value = withSpring(1, { damping: 15, stiffness: 300 });
+  };
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -25,58 +44,61 @@ export function TrackItem({ track, index, onPress, isPlaying, showIndex, showQua
 
   return (
     <Pressable
-      style={({ pressed }) => [styles.container, pressed && styles.pressed]}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       onPress={handlePress}
     >
-      {showIndex && (
-        <View style={styles.indexContainer}>
-          {isPlaying ? (
-            <Ionicons name="musical-note" size={14} color={Colors.primary} />
-          ) : (
-            <Text style={styles.indexText}>{(index ?? 0) + 1}</Text>
-          )}
-        </View>
-      )}
+      <Animated.View style={[styles.container, animatedStyle]}>
+        {showIndex && (
+          <View style={styles.indexContainer}>
+            {isPlaying ? (
+              <Ionicons name="musical-note" size={14} color={Colors.primary} />
+            ) : (
+              <Text style={styles.indexText}>{(index ?? 0) + 1}</Text>
+            )}
+          </View>
+        )}
 
-      {!showIndex && (
-        <View style={styles.artworkContainer}>
-          {track.artwork ? (
-            <Image source={{ uri: track.artwork }} style={styles.artwork} contentFit="cover" />
-          ) : (
-            <View style={styles.artworkPlaceholder}>
-              <Ionicons name="musical-note" size={18} color={Colors.textTertiary} />
-            </View>
-          )}
-          {isPlaying && (
-            <View style={styles.playingOverlay}>
-              <Ionicons name="volume-high" size={14} color={Colors.primary} />
-            </View>
-          )}
-        </View>
-      )}
+        {!showIndex && (
+          <View style={styles.artworkContainer}>
+            {track.artwork ? (
+              <Image source={{ uri: track.artwork }} style={styles.artwork} contentFit="cover" />
+            ) : (
+              <View style={styles.artworkPlaceholder}>
+                <Ionicons name="musical-note" size={18} color={Colors.textTertiary} />
+              </View>
+            )}
+            {isPlaying && (
+              <View style={styles.playingOverlay}>
+                <Ionicons name="volume-high" size={14} color={Colors.primary} />
+              </View>
+            )}
+          </View>
+        )}
 
-      <View style={styles.info}>
-        <Text style={[styles.title, isPlaying && styles.titlePlaying]} numberOfLines={1}>
-          {track.title}
-        </Text>
-        <View style={styles.subtitleRow}>
-          {showQuality && (
-            <View style={[styles.qualityBadge, { backgroundColor: Colors.quality[quality] + '20' }]}>
-              <Text style={[styles.qualityText, { color: Colors.quality[quality] }]}>
-                {getQualityLabel(quality)}
-              </Text>
-            </View>
-          )}
-          <Text style={styles.artist} numberOfLines={1}>
-            {track.artist}
+        <View style={styles.info}>
+          <Text style={[styles.title, isPlaying && styles.titlePlaying]} numberOfLines={1}>
+            {track.title}
           </Text>
+          <View style={styles.subtitleRow}>
+            {showQuality && (
+              <View style={[styles.qualityBadge, { backgroundColor: Colors.quality[quality] + '20' }]}>
+                <Text style={[styles.qualityText, { color: Colors.quality[quality] }]}>
+                  {getQualityLabel(quality)}
+                </Text>
+              </View>
+            )}
+            <Text style={styles.artist} numberOfLines={1}>
+              {track.artist}
+            </Text>
+          </View>
         </View>
-      </View>
 
-      <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+        <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+      </Animated.View>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

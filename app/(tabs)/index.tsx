@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
 import { PermissionGate } from '@/components/PermissionGate';
@@ -65,11 +66,11 @@ export default function LibraryScreen() {
     />
   ), [currentTrack, handleTrackPress]);
 
-  const renderAlbum = useCallback(({ item }: { item: Album }) => (
+  const renderAlbum = useCallback(({ item, index }: { item: Album; index: number }) => (
     <AlbumCard album={item} onPress={handleAlbumPress} />
   ), [handleAlbumPress]);
 
-  const renderArtist = useCallback(({ item }: { item: Artist }) => (
+  const renderArtist = useCallback(({ item, index }: { item: Artist; index: number }) => (
     <ArtistRow artist={item} onPress={handleArtistPress} />
   ), [handleArtistPress]);
 
@@ -114,6 +115,10 @@ export default function LibraryScreen() {
                 contentContainerStyle={[styles.listContent, { paddingBottom: currentTrack ? 160 : 100 }]}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={!!tracks.length}
+                initialNumToRender={15}
+                maxToRenderPerBatch={15}
+                windowSize={5}
+                removeClippedSubviews={true}
                 refreshControl={
                   <RefreshControl
                     refreshing={refreshing}
@@ -143,6 +148,10 @@ export default function LibraryScreen() {
                 contentContainerStyle={[styles.albumListContent, { paddingBottom: currentTrack ? 160 : 100 }]}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={!!albums.length}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews={true}
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
                     <Ionicons name="disc-outline" size={48} color={Colors.textTertiary} />
@@ -161,6 +170,10 @@ export default function LibraryScreen() {
                 contentContainerStyle={[styles.listContent, { paddingBottom: currentTrack ? 160 : 100 }]}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={!!artists.length}
+                initialNumToRender={15}
+                maxToRenderPerBatch={15}
+                windowSize={5}
+                removeClippedSubviews={true}
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
                     <Ionicons name="people-outline" size={48} color={Colors.textTertiary} />

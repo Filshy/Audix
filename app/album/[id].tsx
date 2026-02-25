@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
 import { TrackItem } from '@/components/TrackItem';
@@ -94,6 +95,10 @@ export default function AlbumDetailScreen() {
         keyExtractor={item => item.id}
         scrollEnabled={!!album.tracks.length}
         showsVerticalScrollIndicator={false}
+        initialNumToRender={20}
+        maxToRenderPerBatch={20}
+        windowSize={5}
+        removeClippedSubviews={true}
         contentContainerStyle={{ paddingBottom: currentTrack ? 160 : bottomInset + 40 }}
         ListHeaderComponent={
           <View style={styles.headerSection}>

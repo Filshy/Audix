@@ -2,23 +2,10 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import { Track, Album, Artist, RepeatMode, getFormatFromFilename } from './types';
-import * as Crypto from 'expo-crypto';
-import Constants from 'expo-constants';
-
-function getBaseUrl() {
-  if (Platform.OS === 'web') {
-    const domain = (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_DOMAIN;
-    if (domain) return `https://${domain}`;
-    return '';
-  }
-  const domain = (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_DOMAIN;
-  if (domain) return `https://${domain}`;
-  return 'http://localhost:5000';
-}
-
-function estimateAudioQuality(format: string, duration: number, fileSize?: number): { bitrate: number; sampleRate: number; bitDepth: number; channels: number } {
+import MusicInfo from 'expo-music-info-2';
+import * as FileSystem from 'expo-file-system/legacy'; function estimateAudioQuality(format: string, duration: number, fileSize?: number): { bitrate: number; sampleRate: number; bitDepth: number; channels: number } {
   const fmt = format?.toUpperCase() || '';
 
   if (fileSize && duration > 0) {
@@ -170,7 +157,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     setIsFetchingMetadata(true);
 
     try {
-      const cachedStr = await AsyncStorage.getItem('track_metadata_v2');
+      const cachedStr = await AsyncStorage.getItem('track_metadata_v6');
       const cache: Record<string, any> = cachedStr ? JSON.parse(cachedStr) : {};
 
       const unfetched = trackList.filter(t => !cache[t.id] && !t.metadataFetched);
@@ -200,60 +187,84 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const baseUrl = getBaseUrl();
-      const batchSize = 5;
+      const batchSize = 3;
 
       for (let i = 0; i < unfetched.length; i += batchSize) {
         const batch = unfetched.slice(i, i + batchSize);
 
         try {
-          const res = await fetch(`${baseUrl}/api/metadata/batch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tracks: batch.map(t => ({ id: t.id, title: t.title, artist: t.artist })),
-            }),
-          });
-
-          if (res.ok) {
-            const { results } = await res.json();
-            for (const [id, meta] of Object.entries(results)) {
-              cache[id] = meta;
-            }
-
+          if (Platform.OS === 'web') {
+            // Web fallback: Just marking as fetched to avoid loops
             for (const t of batch) {
-              if (!cache[t.id]) {
-                cache[t.id] = { _notFound: true };
+              cache[t.id] = { _notFound: true };
+            }
+          } else {
+            for (const t of batch) {
+              if (t.uri && !cache[t.id]) {
+                const info = await MusicInfo.getMusicInfoAsync(t.uri, {
+                  title: true,
+                  artist: true,
+                  album: true,
+                  picture: true
+                });
+
+                if (info) {
+                  console.log(`[MusicInfo] Extracted info for ${t.title}: HasPicture=${!!info.picture?.pictureData}, Len=${info.picture?.pictureData?.length || 0}`);
+                  let artworkUri: string | null = null;
+                  if (info.picture?.pictureData) {
+                    const safeName = t.id.toString().replace(/[^a-zA-Z0-9]/g, '');
+                    const fileUri = `${FileSystem.documentDirectory}artwork_${safeName}.jpg`;
+                    try {
+                      const base64Data = info.picture.pictureData.replace(/^data:.*?;base64,/, '');
+                      await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+                        encoding: 'base64',
+                      });
+                      artworkUri = fileUri;
+                    } catch (e) {
+                      console.warn('Failed to save artwork to disk', e);
+                    }
+                  }
+
+                  cache[t.id] = {
+                    title: info.title,
+                    artist: info.artist,
+                    album: info.album,
+                    coverArt: artworkUri,
+                  };
+                } else {
+                  cache[t.id] = { _notFound: true };
+                }
               }
             }
-
-            await AsyncStorage.setItem('track_metadata_v2', JSON.stringify(cache));
-
-            setTracks(prev => prev.map(t => {
-              const c = cache[t.id];
-              if (c && !c._notFound) {
-                const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
-                return {
-                  ...t,
-                  artist: (c as any).artist || t.artist,
-                  album: (c as any).album || t.album,
-                  artwork: (c as any).coverArt || t.artwork,
-                  bitrate: t.bitrate || quality.bitrate,
-                  sampleRate: t.sampleRate || quality.sampleRate,
-                  bitDepth: t.bitDepth || quality.bitDepth,
-                  channels: t.channels || quality.channels,
-                  metadataFetched: true,
-                };
-              }
-              if (!t.bitrate) {
-                const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
-                return { ...t, bitrate: quality.bitrate, sampleRate: quality.sampleRate, bitDepth: quality.bitDepth, channels: quality.channels, metadataFetched: true };
-              }
-              return { ...t, metadataFetched: true };
-            }));
           }
+
+          await AsyncStorage.setItem('track_metadata_v6', JSON.stringify(cache));
+
+          setTracks(prev => prev.map(t => {
+            const c = cache[t.id];
+            if (c && !c._notFound) {
+              const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
+              return {
+                ...t,
+                title: c.title || t.title,
+                artist: c.artist || t.artist,
+                album: c.album || t.album,
+                artwork: c.coverArt || t.artwork,
+                bitrate: t.bitrate || quality.bitrate,
+                sampleRate: t.sampleRate || quality.sampleRate,
+                bitDepth: t.bitDepth || quality.bitDepth,
+                channels: t.channels || quality.channels,
+                metadataFetched: true,
+              };
+            }
+            if (!t.bitrate) {
+              const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
+              return { ...t, bitrate: quality.bitrate, sampleRate: quality.sampleRate, bitDepth: quality.bitDepth, channels: quality.channels, metadataFetched: true };
+            }
+            return { ...t, metadataFetched: true };
+          }));
         } catch (err) {
-          console.warn('Batch metadata fetch error:', err);
+          console.warn('Local metadata fetch error:', err);
           setTracks(prev => prev.map(t => {
             if (!t.bitrate) {
               const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
@@ -264,7 +275,8 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         }
 
         if (i + batchSize < unfetched.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Give UI thread time to breathe
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
     } catch (err) {
@@ -288,7 +300,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['audio']);
+      const { status } = await MediaLibrary.requestPermissionsAsync();
       setHasPermission(status === 'granted');
       if (status === 'granted') {
         await scanLibraryInternal();
@@ -394,7 +406,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         fetchMetadataForTracks(withQuality);
       } else {
         try {
-          const { status } = await MediaLibrary.getPermissionsAsync(false, ['audio']);
+          const { status } = await MediaLibrary.getPermissionsAsync();
           setHasPermission(status === 'granted');
           if (status === 'granted') {
             await scanLibraryInternal();

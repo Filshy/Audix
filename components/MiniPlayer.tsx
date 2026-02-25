@@ -6,13 +6,28 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, SlideInDown, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
 import { formatDuration } from '@/lib/types';
 
 export function MiniPlayer() {
   const { currentTrack, isPlaying, togglePlayPause, skipNext, position, duration } = useMusic();
+
+  const playScale = useSharedValue(1);
+  const playAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: playScale.value }],
+  }));
+
+  const handlePlayPressIn = () => {
+    playScale.value = withSpring(0.8, { damping: 15, stiffness: 300 });
+  };
+  const handlePlayPressOut = () => {
+    playScale.value = withSpring(1, { damping: 15, stiffness: 300 });
+  };
+
+  const isWeb = Platform.OS === 'web';
+  const isIOS = Platform.OS === 'ios';
 
   if (!currentTrack) return null;
 
@@ -32,9 +47,6 @@ export function MiniPlayer() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     skipNext();
   };
-
-  const isWeb = Platform.OS === 'web';
-  const isIOS = Platform.OS === 'ios';
 
   const content = (
     <>
@@ -59,12 +71,19 @@ export function MiniPlayer() {
         </Pressable>
 
         <View style={styles.controls}>
-          <Pressable onPress={handleToggle} hitSlop={8}>
-            <Ionicons
-              name={isPlaying ? 'pause' : 'play'}
-              size={26}
-              color={Colors.text}
-            />
+          <Pressable
+            onPressIn={handlePlayPressIn}
+            onPressOut={handlePlayPressOut}
+            onPress={handleToggle}
+            hitSlop={8}
+          >
+            <Animated.View style={playAnimatedStyle}>
+              <Ionicons
+                name={isPlaying ? 'pause' : 'play'}
+                size={26}
+                color={Colors.text}
+              />
+            </Animated.View>
           </Pressable>
           <Pressable onPress={handleSkip} hitSlop={8}>
             <Ionicons name="play-forward" size={22} color={Colors.text} />

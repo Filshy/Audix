@@ -21,19 +21,23 @@ import { LinearGradient } from 'expo-linear-gradient';
 import ImageColors from 'react-native-image-colors';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
 import { PanResponder } from 'react-native';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
 import { formatDuration, getQualityTier, getQualityLabel } from '@/lib/types';
 import { BouncyButton } from '@/components/BouncyButton';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 48; // Edge-to-edge with slight padding
 
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
-export default function NowPlayingScreen() {
+const AnimatedBlurView = Animated.createAnimatedComponent(BlurView);
+const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
+const MINI_PLAYER_HEIGHT = 64; // Slightly taller for more presence
+
+export function GlobalPlayer() {
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
   const topInset = isWeb ? 67 : insets.top;
@@ -164,20 +168,94 @@ export default function NowPlayingScreen() {
 
     fetchColors();
   }, [currentTrack?.artwork]);
+  const expansion = useSharedValue(0);
+  const startExpansion = React.useRef(0);
 
-  if (!currentTrack) {
-    return (
-      <View style={[styles.container, { paddingTop: topInset }]}>
-        <View style={styles.emptyContainer}>
-          <Ionicons name="musical-notes-outline" size={64} color={Colors.textTertiary} />
-          <Text style={styles.emptyText}>No track playing</Text>
-          <Pressable onPress={() => router.back()}>
-            <Text style={styles.emptyLink}>Go to Library</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
+  const expand = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    expansion.value = withSpring(1, { damping: 28, stiffness: 95, mass: 1 });
+  };
+
+  const collapse = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    expansion.value = withSpring(0, { damping: 28, stiffness: 95, mass: 1 });
+  };
+
+  const TAB_BAR_HEIGHT = isWeb ? 84 : (60 + bottomInset);
+  // YT Music style: Miniplayer sits exactly above the tab bar. 
+  // If it feels "incastrato", we ensure it starts exactly at the top of the tab bar.
+
+  const containerStyle = useAnimatedStyle(() => {
+    const offset = SCREEN_HEIGHT - TAB_BAR_HEIGHT - MINI_PLAYER_HEIGHT - 12; // 12px gap from tab bar
+    const translateY = interpolate(expansion.value, [0, 1], [offset, 0], Extrapolation.CLAMP);
+    const borderRadius = interpolate(expansion.value, [0, 1], [24, 0], Extrapolation.CLAMP);
+    const marginHorizontal = interpolate(expansion.value, [0, 1], [8, 0], Extrapolation.CLAMP);
+
+    return {
+      transform: [{ translateY }],
+      borderRadius,
+      marginHorizontal,
+      width: SCREEN_WIDTH - (marginHorizontal * 2),
+      height: SCREEN_HEIGHT,
+      position: 'absolute', pointerEvents: expansion.value > 0.3 ? 'auto' : 'box-none',
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+    };
+  });
+
+  const fullPlayerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(expansion.value, [0.05, 0.25], [0, 1], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(expansion.value, [0, 1], [40, 0], Extrapolation.CLAMP) }],
+    flex: 1,
+    pointerEvents: expansion.value > 0.5 ? 'auto' : 'none',
+  }));
+
+  const miniPlayerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(expansion.value, [0, 0.15], [1, 0], Extrapolation.CLAMP),
+    pointerEvents: expansion.value < 0.1 ? 'auto' : 'none',
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: MINI_PLAYER_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 10,
+  }));
+
+  const swipeDownResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderGrant: () => {
+        startExpansion.current = expansion.value;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const delta = -(gestureState.dy / SCREEN_HEIGHT);
+        let nextVal = startExpansion.current + delta;
+        nextVal = Math.max(0, Math.min(1, nextVal));
+        expansion.value = nextVal;
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.vy > 0.5) collapse();
+        else if (gestureState.vy < -0.5) expand();
+        else {
+          if (expansion.value > 0.5) expand();
+          else collapse();
+        }
+      },
+    })
+  ).current;
+
+  if (!currentTrack) return null;
 
   const quality = getQualityTier(currentTrack.bitrate, currentTrack.format?.toLowerCase());
   const qualityColor = Colors.quality[quality];
@@ -228,56 +306,55 @@ export default function NowPlayingScreen() {
     toggleRepeat();
   };
 
-  const swipeDownResponder = React.useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Intercept downward swipes
-        return gestureState.dy > 15 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 25 || gestureState.vy > 0.5) {
-          router.back();
-        }
-      },
-    })
-  ).current;
-
   const validArtwork = currentTrack?.artwork && !imageError;
 
   return (
-    <View style={styles.container}>
-      <Animated.View style={[StyleSheet.absoluteFill, animatedBlurStyle]}>
-        {/* Blurred Artwork Background */}
-        {validArtwork && (
-          <Image
-            source={{ uri: currentTrack.artwork }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-          />
-        )}
-
-        {/* Blur Overlay - makes the artwork very soft */}
-        {validArtwork && (
-          <BlurView
-            intensity={120}
-            tint="dark"
-            style={StyleSheet.absoluteFill}
-          />
-        )}
-
-        {/* Dominant Color Gradient Overlay for depth and text legibility */}
-        <LinearGradient
-          colors={[bgColor, 'transparent', Colors.background]}
-          locations={[0, 0.4, 1]}
-          style={[StyleSheet.absoluteFill, { opacity: 0.8 }]}
-        />
+    <Animated.View style={containerStyle}>
+      {/* Background for full player */}
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: expansion, backgroundColor: '#0A0A0F' }]}>
+        <Animated.View style={[StyleSheet.absoluteFill, animatedBlurStyle]}>
+          {validArtwork && <Image source={{ uri: currentTrack.artwork }} style={StyleSheet.absoluteFill} contentFit="cover" />}
+          {validArtwork && <BlurView intensity={120} tint="dark" style={StyleSheet.absoluteFill} />}
+          <LinearGradient colors={[bgColor, 'transparent', '#0A0A0F']} locations={[0, 0.4, 1]} style={[StyleSheet.absoluteFill, { opacity: 0.8 }]} />
+        </Animated.View>
       </Animated.View>
 
-      <View style={[styles.mainLayout, { paddingTop: topInset }]} {...swipeDownResponder.panHandlers}>
+      {/* MINI PLAYER BAR */}
+      <Animated.View style={miniPlayerStyle}>
+        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(25,25,35,0.9)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }]} />
+        <Pressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} onPress={expand}>
+          <View style={{ width: 40, height: 40, borderRadius: 6, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.1)' }}>
+            {validArtwork ? (
+              <AnimatedImage source={{ uri: currentTrack.artwork }} style={{ width: 40, height: 40 }} contentFit="cover" />
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Ionicons name="musical-note" size={16} color={Colors.primary} /></View>
+            )}
+          </View>
+          <View style={{ marginLeft: 12, flex: 1, paddingRight: 10 }}>
+            <Text style={{ color: Colors.text, fontSize: 13, fontFamily: 'Inter_600SemiBold' }} numberOfLines={1}>{currentTrack.title}</Text>
+            <Text style={{ color: Colors.textSecondary, fontSize: 11, fontFamily: 'Inter_500Medium', marginTop: 2 }} numberOfLines={1}>{currentTrack.artist}</Text>
+          </View>
+        </Pressable>
 
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.topBarIconLeft}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <BouncyButton onPress={handlePlayPause} hitSlop={12}>
+            <Ionicons name={isPlaying ? 'pause' : 'play'} size={26} color={Colors.text} />
+          </BouncyButton>
+          <BouncyButton onPress={handleSkipNext} hitSlop={12}>
+            <Ionicons name="play-forward" size={22} color={Colors.text} />
+          </BouncyButton>
+        </View>
+
+        <View style={{ position: 'absolute', bottom: -1, left: 16, right: 16, height: 2, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 1 }}>
+          <View style={{ height: 2, backgroundColor: Colors.text, borderRadius: 1, width: `${progress * 100}%` }} />
+        </View>
+      </Animated.View>
+
+      <Animated.View style={fullPlayerStyle} {...swipeDownResponder.panHandlers}>
+        <View style={{ height: 4, width: 36, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: topInset > 20 ? topInset - 10 : 12 }} />
+        <View style={[styles.topBar, { paddingTop: 8 }]}>
+          <Pressable onPress={() => collapse()} hitSlop={12} style={styles.topBarIconLeft}>
             <Ionicons name="chevron-down" size={28} color={Colors.text} />
           </Pressable>
           <View style={styles.topBarCenter}>
@@ -338,41 +415,30 @@ export default function NowPlayingScreen() {
                 </Text>
               </View>
               <View style={styles.specsContainer}>
-                <Text style={styles.specsText}>
-                  {[
-                    currentTrack.format?.toUpperCase(),
-                    currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null,
-                    currentTrack.sampleRate ? `${(currentTrack.sampleRate / 1000).toFixed(1)} kHz` : null,
-                    currentTrack.bitDepth ? `${currentTrack.bitDepth}-bit` : null,
-                  ].filter(Boolean).join('  •  ')}
+                <Text style={styles.specsText} numberOfLines={1}>
+                  {currentTrack.format?.toUpperCase()} • {currentTrack.bitDepth || 16} bit / {currentTrack.sampleRate ? (currentTrack.sampleRate / 1000).toFixed(1) : 44.1} kHz • {currentTrack.bitrate && currentTrack.bitrate > 0 ? currentTrack.bitrate : (currentTrack.format === 'FLAC' ? 1411 : 320)} kbps
                 </Text>
               </View>
             </View>
           </View>
 
           <View style={styles.progressSection}>
+            <View style={styles.progressBarContainer}>
+              <View
+                style={styles.progressBarBg}
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={(e) => handleSeekStart(e.nativeEvent.locationX, ARTWORK_SIZE)}
+                onResponderMove={(e) => handleSeekMove(e.nativeEvent.locationX, ARTWORK_SIZE)}
+                onResponderRelease={handleSeekEnd}
+              >
+                <View style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: Colors.text }]} />
+                <View style={[styles.progressKnob, { left: `${progress * 100}%`, backgroundColor: Colors.text }]} />
+              </View>
+            </View>
             <View style={styles.timeRow}>
               <Text style={styles.timeText}>{formatDuration(isSeeking ? seekPosition : position)}</Text>
               <Text style={styles.timeText}>{formatDuration(duration)}</Text>
             </View>
-            <Pressable
-              style={({ pressed }) => [styles.progressBarContainer, { opacity: pressed ? 0.8 : 1 }]}
-              hitSlop={{ top: 16, bottom: 16 }}
-              onPressIn={(e) => {
-                const { locationX } = e.nativeEvent;
-                handleSeekStart(locationX, SCREEN_WIDTH - 48);
-              }}
-              onResponderMove={(e) => {
-                const { locationX } = e.nativeEvent;
-                handleSeekMove(locationX, SCREEN_WIDTH - 48);
-              }}
-              onPressOut={handleSeekEnd}
-            >
-              <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
-                <View style={[styles.progressKnob, { left: `${progress * 100}%` }]} />
-              </View>
-            </Pressable>
           </View>
 
           <View style={styles.controlsSection}>
@@ -441,7 +507,7 @@ export default function NowPlayingScreen() {
             </BouncyButton>
           </View>
         </ScrollView>
-      </View>
+      </Animated.View>
 
       <Modal
         visible={showDevices}
@@ -455,20 +521,20 @@ export default function NowPlayingScreen() {
         >
           <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Output Audio</Text>
+              <Text style={styles.modalTitle}>Connect Device</Text>
               <BouncyButton onPress={() => setShowDevices(false)} hitSlop={8}>
                 <Ionicons name="close-circle" size={28} color={Colors.surfaceHighlight} />
               </BouncyButton>
             </View>
 
             <View style={styles.deviceList}>
-              <BouncyButton style={styles.deviceRowActive} onPress={() => setShowDevices(false)}>
+              <BouncyButton style={styles.deviceRow} onPress={() => setShowDevices(false)}>
                 <Ionicons name="phone-portrait-outline" size={24} color={Colors.tidalCyan} />
                 <View style={styles.deviceInfo}>
-                  <Text style={styles.deviceNameActive}>Questo telefono</Text>
-                  <Text style={styles.deviceStateActive}>In riproduzione</Text>
+                  <Text style={[styles.deviceName, { color: Colors.tidalCyan }]}>This Phone</Text>
+                  <Text style={styles.deviceState}>Active Device</Text>
                 </View>
-                <Ionicons name="checkmark" size={24} color={Colors.tidalCyan} style={styles.deviceCheck} />
+                <Ionicons name="checkmark" size={24} color={Colors.tidalCyan} />
               </BouncyButton>
 
               <BouncyButton style={styles.deviceRow} onPress={() => setShowDevices(false)}>
@@ -491,7 +557,6 @@ export default function NowPlayingScreen() {
         </Pressable>
       </Modal>
 
-      {/* Metadata Editor Modal */}
       <Modal
         visible={showMetadataEditor}
         animationType="slide"
@@ -517,7 +582,7 @@ export default function NowPlayingScreen() {
                   style={styles.textInput}
                   value={editTitle}
                   onChangeText={setEditTitle}
-                  placeholder="Unknown Title"
+                  placeholder="Track Title"
                   placeholderTextColor={Colors.textTertiary}
                   returnKeyType="next"
                 />
@@ -527,7 +592,7 @@ export default function NowPlayingScreen() {
                   style={styles.textInput}
                   value={editArtist}
                   onChangeText={setEditArtist}
-                  placeholder="Unknown Artist"
+                  placeholder="Artist Name"
                   placeholderTextColor={Colors.textTertiary}
                   returnKeyType="next"
                 />
@@ -564,7 +629,7 @@ export default function NowPlayingScreen() {
         />
         <Text style={styles.toastText}>{toastMessage}</Text>
       </Animated.View>
-    </View>
+    </Animated.View>
   );
 }
 

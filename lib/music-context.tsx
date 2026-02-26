@@ -3,7 +3,7 @@ import { Audio } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules } from 'react-native';
-import { Track, Album, Artist, RepeatMode, getFormatFromFilename } from './types';
+import { Track, Album, Artist, Playlist, RepeatMode, getFormatFromFilename } from './types';
 import MusicInfo from 'expo-music-info-2';
 import * as FileSystem from 'expo-file-system/legacy';
 import { cleanTrackTitle } from './utils';
@@ -84,12 +84,19 @@ interface MusicContextValue {
   toggleRepeat: () => void;
   playAlbum: (album: Album) => void;
   scanLibrary: () => Promise<void>;
+  updateTrackMetadata: (trackId: string, updates: Partial<Track>) => Promise<boolean>;
+  playlists: Playlist[];
+  createPlaylist: (name: string) => Promise<void>;
+  addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
+  deletePlaylist: (playlistId: string) => Promise<void>;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
 
 export function MusicProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -103,6 +110,20 @@ export function MusicProvider({ children }: { children: ReactNode }) {
   const soundRef = useRef<Audio.Sound | null>(null);
   const positionInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const metadataFetchRef = useRef(false);
+
+  useEffect(() => {
+    const loadPlaylists = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('user_playlists_v1');
+        if (stored) {
+          setPlaylists(JSON.parse(stored));
+        }
+      } catch (err) {
+        console.error('Failed to load playlists', err);
+      }
+    };
+    loadPlaylists();
+  }, []);
 
   const albums = useMemo(() => {
     const albumMap = new Map<string, Album>();
@@ -160,7 +181,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     setIsFetchingMetadata(true);
 
     try {
-      const cachedStr = await AsyncStorage.getItem('track_metadata_v10');
+      const cachedStr = await AsyncStorage.getItem('track_metadata_v11');
       const cache: Record<string, any> = cachedStr ? JSON.parse(cachedStr) : {};
 
       const unfetched = trackList.filter(t => !cache[t.id] && !t.metadataFetched);
@@ -228,10 +249,15 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                       // Remove any whitespaces/newlines/invalid chars that might corrupt the base64 payload
                       base64Data = base64Data.replace(/[^A-Za-z0-9+/=]/g, '');
 
-                      await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-                        encoding: FileSystem.EncodingType.Base64,
-                      });
-                      artworkUri = fileUri;
+                      if (base64Data.length > 100) {
+                        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+                          encoding: FileSystem.EncodingType.Base64,
+                        });
+                        const fileInfo = await FileSystem.getInfoAsync(fileUri);
+                        if (fileInfo.exists && fileInfo.size && fileInfo.size > 100) {
+                          artworkUri = fileUri;
+                        }
+                      }
                     } catch (e) {
                       console.warn('Failed to save embedded artwork to disk', e);
                     }
@@ -256,8 +282,11 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
                         const downloadResult = await FileSystem.downloadAsync(remoteArtworkUrl, fileUri);
                         if (downloadResult.status === 200) {
-                          artworkUri = downloadResult.uri;
-                          console.log(`[iTunes] Successfully downloaded artwork for ${cleanedTitle}`);
+                          const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+                          if (fileInfo.exists && fileInfo.size && fileInfo.size > 100) {
+                            artworkUri = downloadResult.uri;
+                            console.log(`[iTunes] Successfully downloaded artwork for ${cleanedTitle}`);
+                          }
                         }
                       }
                     }
@@ -271,13 +300,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
                   artist: finalArtist,
                   album: info?.album || '',
                   coverArt: artworkUri,
-                  _notFound: !info && !artworkUri, // Only mark as truly not found if BOTH local extraction AND iTunes failed completely.
+                  _notFound: !artworkUri, // Mark as not found if NO artwork could be resolved and verified
                 };
               }
             }
           }
 
-          await AsyncStorage.setItem('track_metadata_v10', JSON.stringify(cache));
+          await AsyncStorage.setItem('track_metadata_v11', JSON.stringify(cache));
 
           setTracks(prev => prev.map(t => {
             const c = cache[t.id];
@@ -619,6 +648,161 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }
   }, [playTrack]);
 
+  const updateTrackMetadata = useCallback(async (trackId: string, updates: Partial<Track>) => {
+    const currentTrackData = tracks.find(t => t.id === trackId);
+
+    if (!currentTrackData) return false;
+
+    const titleChanged = updates.title !== undefined && updates.title !== currentTrackData.title;
+    const artistChanged = updates.artist !== undefined && updates.artist !== currentTrackData.artist;
+    const albumChanged = updates.album !== undefined && updates.album !== currentTrackData.album;
+    const refetchArtwork = titleChanged || artistChanged || albumChanged;
+
+    const updatedTrack = { ...currentTrackData, ...updates };
+
+    // Attempt to physically rename the file on the device (if title or artist changed)
+    if ((titleChanged || artistChanged) && currentTrackData.uri && currentTrackData.uri.startsWith('file://')) {
+      try {
+        const oldFileUri = currentTrackData.uri;
+        // Generate new filename based on new Artist and Title (strip invalid filename characters)
+        const safeArtist = (updatedTrack.artist || 'Unknown Artist').replace(/[/\\?%*:|"<>]/g, '').trim();
+        const safeTitle = (updatedTrack.title || 'Unknown Title').replace(/[/\\?%*:|"<>]/g, '').trim();
+        const ext = currentTrackData.filename?.split('.').pop() || 'mp3';
+
+        let newFilename = `${safeTitle}.${ext}`;
+        if (safeArtist && safeArtist !== 'Unknown Artist') {
+          newFilename = `${safeArtist} - ${safeTitle}.${ext}`;
+        }
+
+        const lastSlashIndex = oldFileUri.lastIndexOf('/');
+        if (lastSlashIndex !== -1) {
+          const newFileUri = oldFileUri.substring(0, lastSlashIndex + 1) + newFilename;
+
+          if (oldFileUri !== newFileUri) {
+            console.log(`[File Rename] Moving ${oldFileUri} to ${newFileUri}`);
+            await FileSystem.moveAsync({
+              from: oldFileUri,
+              to: newFileUri
+            });
+            updatedTrack.uri = newFileUri;
+            updatedTrack.filename = newFilename;
+
+            // Note: Since we renamed the file outside MediaLibrary's sync, 
+            // the asset ID might become stale. We update our internal state, 
+            // but a full scanLibrary might duplicate it or remove it depending on Android's MediaStore.
+          }
+        }
+      } catch (fsErr) {
+        console.warn('Physical file rename failed (might require Storage Access Framework on Android 11+)', fsErr);
+      }
+    }
+
+    if (refetchArtwork && Platform.OS !== 'web') {
+      try {
+        const cleanedTitle = cleanTrackTitle(updatedTrack.title || '');
+        const finalArtist = updatedTrack.artist || '';
+        const query = encodeURIComponent(`${cleanedTitle} ${finalArtist}`.trim());
+        const response = await fetch(`https://itunes.apple.com/search?term=${query}&entity=song&limit=1`);
+        const data = await response.json();
+
+        if (data.results && data.results.length > 0) {
+          const result = data.results[0];
+          const remoteArtworkUrl = result.artworkUrl100?.replace('100x100bb', '600x600bb');
+
+          if (remoteArtworkUrl) {
+            const safeName = trackId.replace(/[^a-zA-Z0-9]/g, '');
+            const fileUri = `${FileSystem.documentDirectory}artwork_itunes_custom_${Date.now()}_${safeName}.jpg`;
+            const downloadRes = await FileSystem.downloadAsync(remoteArtworkUrl, fileUri);
+            const fileInfo = await FileSystem.getInfoAsync(downloadRes.uri);
+            if (fileInfo.exists && fileInfo.size && fileInfo.size > 100) {
+              updatedTrack.artwork = downloadRes.uri;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch new artwork', e);
+      }
+    }
+
+    setTracks(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
+    setCurrentTrack(prev => prev?.id === trackId ? updatedTrack : prev);
+    setQueue(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
+
+    try {
+      const cachedStr = await AsyncStorage.getItem('track_metadata_v11');
+      const cache: Record<string, any> = cachedStr ? JSON.parse(cachedStr) : {};
+      const existingCache = cache[trackId] || {};
+
+      cache[trackId] = {
+        ...existingCache,
+        title: updatedTrack.title,
+        artist: updatedTrack.artist,
+        album: updatedTrack.album,
+        coverArt: updatedTrack.artwork,
+        metadataFetched: true,
+      };
+
+      await AsyncStorage.setItem('track_metadata_v11', JSON.stringify(cache));
+    } catch (e) {
+      console.error('Failed to update cache', e);
+    }
+
+    return true;
+  }, [tracks]);
+
+  const savePlaylists = async (newPlaylists: Playlist[]) => {
+    setPlaylists(newPlaylists);
+    try {
+      await AsyncStorage.setItem('user_playlists_v1', JSON.stringify(newPlaylists));
+    } catch (err) {
+      console.error('Failed to save playlists', err);
+    }
+  };
+
+  const createPlaylist = useCallback(async (name: string) => {
+    const newPlaylist: Playlist = {
+      id: Date.now().toString(),
+      name,
+      tracks: [],
+    };
+    await savePlaylists([...playlists, newPlaylist]);
+  }, [playlists]);
+
+  const addTrackToPlaylist = useCallback(async (playlistId: string, track: Track) => {
+    const updated = playlists.map(p => {
+      if (p.id === playlistId) {
+        const trackExists = p.tracks.some(t => t.id === track.id);
+        if (!trackExists) {
+          return {
+            ...p,
+            tracks: [...p.tracks, track],
+            artwork: p.artwork || track.artwork,
+          };
+        }
+      }
+      return p;
+    });
+    await savePlaylists(updated);
+  }, [playlists]);
+
+  const removeTrackFromPlaylist = useCallback(async (playlistId: string, trackId: string) => {
+    const updated = playlists.map(p => {
+      if (p.id === playlistId) {
+        return {
+          ...p,
+          tracks: p.tracks.filter(t => t.id !== trackId),
+        };
+      }
+      return p;
+    });
+    await savePlaylists(updated);
+  }, [playlists]);
+
+  const deletePlaylist = useCallback(async (playlistId: string) => {
+    const updated = playlists.filter(p => p.id !== playlistId);
+    await savePlaylists(updated);
+  }, [playlists]);
+
   const value = useMemo(() => ({
     tracks,
     albums,
@@ -643,7 +827,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     toggleRepeat,
     playAlbum,
     scanLibrary,
-  }), [tracks, albums, artists, currentTrack, isPlaying, position, duration, shuffle, repeatMode, queue, isLoading, isFetchingMetadata, hasPermission, requestPermission, playTrack, togglePlayPause, seekTo, skipNext, skipPrevious, toggleShuffle, toggleRepeat, playAlbum, scanLibrary]);
+    updateTrackMetadata,
+    playlists,
+    createPlaylist,
+    addTrackToPlaylist,
+    removeTrackFromPlaylist,
+    deletePlaylist,
+  }), [tracks, albums, artists, currentTrack, isPlaying, position, duration, shuffle, repeatMode, queue, isLoading, isFetchingMetadata, hasPermission, requestPermission, playTrack, togglePlayPause, seekTo, skipNext, skipPrevious, toggleShuffle, toggleRepeat, playAlbum, scanLibrary, updateTrackMetadata, playlists, createPlaylist, addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist]);
 
   return (
     <MusicContext.Provider value={value}>

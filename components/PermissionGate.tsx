@@ -93,12 +93,10 @@ export function PermissionGate({ children }: { children: React.ReactNode }) {
         </LinearGradient>
       </Pressable>
 
-      {Platform.OS !== 'web' && (
-        <Pressable onPress={handleOpenSettings} style={styles.settingsLink}>
-          <Ionicons name="settings-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.settingsText}>Open Device Settings</Text>
-        </Pressable>
-      )}
+      <Pressable onPress={handleOpenSettings} style={styles.settingsLink}>
+        <Ionicons name="settings-outline" size={16} color={Colors.textSecondary} />
+        <Text style={styles.settingsText}>Open Device Settings</Text>
+      </Pressable>
 
       <Text style={styles.hint}>
         If using Expo Go on Android, the audio permission may require you to allow it from device settings.

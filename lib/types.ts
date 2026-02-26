@@ -25,6 +25,13 @@ export interface Album {
   year?: string;
 }
 
+export interface Playlist {
+  id: string;
+  name: string;
+  artwork?: string;
+  tracks: Track[];
+}
+
 export interface Artist {
   id: string;
   name: string;

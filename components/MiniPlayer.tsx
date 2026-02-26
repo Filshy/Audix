@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, PanResponder } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,39 +10,12 @@ import Animated, { FadeIn, SlideInDown, useSharedValue, useAnimatedStyle, withSp
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
 import { formatDuration } from '@/lib/types';
+import { BouncyButton } from './BouncyButton';
+
+const AnimatedImage = Animated.createAnimatedComponent(Image);
 
 export function MiniPlayer() {
   const { currentTrack, isPlaying, togglePlayPause, skipNext, position, duration } = useMusic();
-
-  const playScale = useSharedValue(1);
-  const playAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: playScale.value }],
-  }));
-
-  const handlePlayPressIn = () => {
-    playScale.value = withSpring(0.8, { damping: 15, stiffness: 300 });
-  };
-  const handlePlayPressOut = () => {
-    playScale.value = withSpring(1, { damping: 15, stiffness: 300 });
-  };
-
-  const panResponder = React.useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy < -10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy < -15 || gestureState.vy < -0.5) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          router.push('/player/now-playing');
-        }
-      },
-    })
-  ).current;
-
-  const isWeb = Platform.OS === 'web';
-  const isIOS = Platform.OS === 'ios';
 
   if (!currentTrack) return null;
 
@@ -74,13 +47,15 @@ export function MiniPlayer() {
           onPress={handlePress}>
           <View style={styles.artworkContainer}>
             {currentTrack.artwork ? (
-              <Image
+              <AnimatedImage
+                // @ts-ignore
+                sharedTransitionTag="artwork-player"
                 source={{ uri: currentTrack.artwork }}
                 style={styles.artwork}
                 contentFit="cover"
               />
             ) : (
-              <View style={styles.artworkPlaceholder}>
+              <View style={styles.placeholderArtwork}>
                 <Ionicons name="musical-note" size={16} color={Colors.primary} />
               </View>
             )}
@@ -92,40 +67,42 @@ export function MiniPlayer() {
         </Pressable>
 
         <View style={styles.controls}>
-          <Pressable
-            onPressIn={handlePlayPressIn}
-            onPressOut={handlePlayPressOut}
+          <BouncyButton
             onPress={handleToggle}
-            hitSlop={8}
+            hitSlop={12}
           >
-            <Animated.View style={playAnimatedStyle}>
-              <Ionicons
-                name={isPlaying ? 'pause' : 'play'}
-                size={26}
-                color={Colors.text}
-              />
-            </Animated.View>
-          </Pressable>
-          <Pressable onPress={handleSkip} hitSlop={8}>
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={26}
+              color={Colors.text}
+            />
+          </BouncyButton>
+          <BouncyButton onPress={handleSkip} hitSlop={12}>
             <Ionicons name="play-forward" size={22} color={Colors.text} />
-          </Pressable>
+          </BouncyButton>
         </View>
       </View>
     </>
   );
 
+  const isWeb = Platform.OS === 'web';
+  const isIOS = Platform.OS === 'ios';
+
   if (isIOS) {
     return (
-      <Animated.View entering={SlideInDown.duration(300)} style={styles.container} {...panResponder.panHandlers}>
-        <BlurView intensity={80} tint="dark" style={styles.blurContainer}>
-          {content}
-        </BlurView>
+      <Animated.View entering={SlideInDown.duration(300)} style={styles.container}>
+        <View style={StyleSheet.absoluteFill}>
+          <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]} />
+        </View>
+        {content}
       </Animated.View>
     );
   }
 
   return (
-    <Animated.View entering={SlideInDown.duration(300)} style={styles.container} {...panResponder.panHandlers}>
+    <Animated.View entering={SlideInDown.duration(300)} style={styles.container}>
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(30,30,30,0.95)' }]} />
       <View style={styles.solidContainer}>
         {content}
       </View>
@@ -136,68 +113,81 @@ export function MiniPlayer() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: Platform.OS === 'web' ? 84 : 80,
+    bottom: Platform.OS === 'web' ? 84 : 96,
     left: 8,
     right: 8,
     borderRadius: 12,
     overflow: 'hidden',
     zIndex: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   blurContainer: {
     overflow: 'hidden',
     borderRadius: 12,
   },
   solidContainer: {
+    flex: 1,
     backgroundColor: Colors.surfaceLight,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   progressBar: {
     height: 2,
-    backgroundColor: Colors.surfaceHighlight,
+    backgroundColor: 'transparent',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   progressFill: {
     height: 2,
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.tidalCyan,
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    padding: 8,
+    paddingRight: 16,
   },
   trackInfo: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   artworkContainer: {
-    width: 40,
-    height: 40,
+    width: 48,
+    height: 48,
     borderRadius: 6,
     overflow: 'hidden',
+    backgroundColor: Colors.surfaceHighlight,
   },
   artwork: {
-    width: 40,
-    height: 40,
+    width: 48,
+    height: 48,
   },
-  artworkPlaceholder: {
-    width: 40,
-    height: 40,
-    backgroundColor: Colors.surfaceHighlight,
+  placeholderArtwork: {
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: Colors.surfaceHighlight,
   },
   textInfo: {
     flex: 1,
-    gap: 2,
+    marginRight: 12,
+    justifyContent: 'center',
   },
   title: {
     color: Colors.text,
     fontSize: 14,
-    fontFamily: 'Inter_500Medium',
+    fontFamily: 'Inter_600SemiBold',
+    marginBottom: 2,
   },
   artist: {
     color: Colors.textSecondary,
@@ -208,6 +198,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-    paddingLeft: 8,
   },
 });

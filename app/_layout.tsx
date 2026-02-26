@@ -9,35 +9,30 @@ import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_7
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { MusicProvider } from "@/lib/music-context";
+import { GlobalPlayer } from "@/components/GlobalPlayer";
 
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: '#0A0A0F' },
-        animation: 'slide_from_right',
-      }}
-    >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="player/now-playing"
-        options={{
-          presentation: 'formSheet',
-          animation: 'slide_from_bottom',
-          gestureEnabled: true,
-          gestureDirection: 'vertical',
-        }}
-      />
-      <Stack.Screen
-        name="album/[id]"
-        options={{
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: '#0A0A0F' },
           animation: 'slide_from_right',
         }}
-      />
-    </Stack>
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="album/[id]"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+      </Stack>
+      <GlobalPlayer />
+    </>
   );
 }
 

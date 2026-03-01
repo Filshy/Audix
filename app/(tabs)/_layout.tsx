@@ -23,6 +23,11 @@ function NativeTabLayout() {
           <Icon sf="magnifyingglass" md="search" />
           <Label>Search</Label>
         </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="settings">
+          {/* @ts-ignore */}
+          <Icon sf="gear" md="settings" />
+          <Label>Settings</Label>
+        </NativeTabs.Trigger>
       </NativeTabs>
     </View>
   );
@@ -86,6 +91,18 @@ function ClassicTabLayout() {
             title: "Search",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="search" size={size} color={color} />
+            ),
+            tabBarButton: (props) => (
+              <BouncyButton {...props} style={props.style} scaleTo={0.9} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="settings"
+          options={{
+            title: "Settings",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="settings" size={size} color={color} />
             ),
             tabBarButton: (props) => (
               <BouncyButton {...props} style={props.style} scaleTo={0.9} />

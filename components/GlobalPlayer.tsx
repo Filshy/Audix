@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,13 +15,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import ImageColors from 'react-native-image-colors';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming, withSpring, interpolate, Extrapolation } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, withSpring, interpolate, Extrapolation, Easing } from 'react-native-reanimated';
 import { PanResponder } from 'react-native';
 import Colors from '@/constants/colors';
 import { useMusic } from '@/lib/music-context';
@@ -57,11 +58,22 @@ export function GlobalPlayer() {
     toggleShuffle,
     toggleRepeat,
     updateTrackMetadata,
+    favorites,
+    toggleFavorite,
   } = useMusic();
 
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekPosition, setSeekPosition] = useState(0);
   const [showDevices, setShowDevices] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
+  const [showEqualizer, setShowEqualizer] = useState(false);
+  const [lyricsLines, setLyricsLines] = useState<{ time: number, text: string }[] | null>(null);
+  const lyricsScrollRef = React.useRef<ScrollView>(null);
+  const [activeLyricIndex, setActiveLyricIndex] = useState(-1);
+  const lyricLayouts = React.useRef<{ [key: number]: number }>({});
+
+  // Equalizer state (simulated)
+  const [eqLevels, setEqLevels] = useState([0.5, 0.7, 0.4, 0.8, 0.6, 0.3]);
 
   // Custom Toast state
   const toastOpacity = useSharedValue(0);
@@ -136,14 +148,113 @@ export function GlobalPlayer() {
   const animatedBlurStyle = useAnimatedStyle(() => ({
     opacity: blurOpacity.value,
   }));
-  const [bgColor, setBgColor] = useState(Colors.tidalMagenta);
+
+  const lyricsOpacity = useSharedValue(0);
 
   useEffect(() => {
-    if (!currentTrack?.artwork || typeof currentTrack.artwork !== 'string') {
+    lyricsOpacity.value = withTiming(showLyrics ? 1 : 0, { duration: 300 });
+  }, [showLyrics]);
+
+  const animatedLyricsStyle = useAnimatedStyle(() => ({
+    opacity: lyricsOpacity.value,
+    transform: [{ scale: interpolate(lyricsOpacity.value, [0, 1], [0.95, 1]) }],
+    pointerEvents: showLyrics ? 'auto' : 'none',
+  }));
+
+  const animatedArtworkContentStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(lyricsOpacity.value, [0, 1], [1, 0.05]),
+    transform: [{ scale: interpolate(lyricsOpacity.value, [0, 1], [1, 0.8]) }],
+    filter: [
+      { blur: interpolate(lyricsOpacity.value, [0, 1], [0, 20]) }
+    ] as any
+  }));
+
+  useEffect(() => {
+    setLyricsLines(null);
+    if (!currentTrack || !currentTrack.uri || isWeb) return;
+
+    const fetchLyrics = async () => {
+      try {
+        if (!currentTrack.uri.startsWith('file://')) return;
+        let lrcPath = currentTrack.uri.substring(0, currentTrack.uri.lastIndexOf('.'));
+        let info1 = await FileSystem.getInfoAsync(lrcPath + '.lrc');
+        let info2 = await FileSystem.getInfoAsync(lrcPath + '.LRC');
+
+        let finalPath = info1.exists ? lrcPath + '.lrc' : (info2.exists ? lrcPath + '.LRC' : null);
+
+        if (!finalPath && currentTrack.uri.includes('%20')) {
+          let decPath = decodeURIComponent(currentTrack.uri);
+          let baseDecPath = decPath.substring(0, decPath.lastIndexOf('.'));
+          let i1 = await FileSystem.getInfoAsync(baseDecPath + '.lrc');
+          let i2 = await FileSystem.getInfoAsync(baseDecPath + '.LRC');
+          finalPath = i1.exists ? baseDecPath + '.lrc' : (i2.exists ? baseDecPath + '.LRC' : null);
+        }
+
+        if (finalPath) {
+          const lrcStr = await FileSystem.readAsStringAsync(finalPath);
+          const lines = lrcStr.split('\n');
+          const parsedLines = [];
+
+          for (const line of lines) {
+            const timeMatch = line.match(/\[(\d{2}):(\d{2}(?:\.\d{2,3})?)\]/);
+            if (timeMatch) {
+              const minutes = parseInt(timeMatch[1], 10);
+              const seconds = parseFloat(timeMatch[2]);
+              const time = minutes * 60 + seconds;
+              let text = line.replace(/\[.*?\]/g, '').trim();
+              if (text.startsWith(':')) text = text.substring(1).trim();
+
+              if (text && !text.match(/^(ar|ti|al|by|offset|length):/i)) {
+                parsedLines.push({ time, text });
+              }
+            }
+          }
+          if (parsedLines.length > 0) {
+            setLyricsLines(parsedLines.sort((a, b) => a.time - b.time));
+          } else {
+            const filtered = lines
+              .map(l => l.replace(/\[.*?\]/g, '').trim())
+              .filter(l => l && !l.startsWith(':') && !l.match(/^(ar|ti|al|by|offset|length):/i));
+            setLyricsLines(filtered.map(text => ({ time: 0, text })));
+          }
+        }
+      } catch (err) {
+        console.warn('Could not read lyrics', err);
+      }
+    };
+    fetchLyrics();
+  }, [currentTrack]);
+
+  useEffect(() => {
+    if (showLyrics && lyricsLines && lyricsLines.length > 0) {
+      const index = lyricsLines.findIndex((line, i) =>
+        position >= line.time && (!lyricsLines[i + 1] || position < lyricsLines[i + 1].time)
+      );
+
+      if (index !== -1 && index !== activeLyricIndex) {
+        setActiveLyricIndex(index);
+
+        // Accurate scroll to the measured position of the active line
+        const offset = lyricLayouts.current[index];
+        if (offset !== undefined) {
+          lyricsScrollRef.current?.scrollTo({
+            y: Math.max(0, offset - (ARTWORK_SIZE / 2)), // Pure center
+            animated: true,
+          });
+        }
+      }
+    }
+  }, [position, showLyrics, lyricsLines, activeLyricIndex]);
+
+  const [bgColor, setBgColor] = useState(Colors.tidalMagenta);
+
+  const artworkUri = currentTrack?.artwork;
+
+  useEffect(() => {
+    if (!artworkUri || typeof artworkUri !== 'string') {
       setBgColor(Colors.tidalMagenta);
       return;
     }
-    const artworkUri = currentTrack.artwork;
 
     const fetchColors = async () => {
       try {
@@ -157,28 +268,25 @@ export function GlobalPlayer() {
           setBgColor(result.vibrant || result.dominant || Colors.tidalMagenta);
         } else if (Platform.OS === 'ios' && result.platform === 'ios') {
           setBgColor(result.primary || result.background || Colors.tidalMagenta);
-        } else {
-          setBgColor(Colors.tidalMagenta);
         }
       } catch (e) {
-        console.warn('Failed to fetch image colors', e);
         setBgColor(Colors.tidalMagenta);
       }
     };
 
     fetchColors();
-  }, [currentTrack?.artwork]);
+  }, [artworkUri]);
   const expansion = useSharedValue(0);
   const startExpansion = React.useRef(0);
 
   const expand = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    expansion.value = withSpring(1, { damping: 28, stiffness: 95, mass: 1 });
+    expansion.value = withSpring(1, { damping: 25, stiffness: 150, mass: 0.5 });
   };
 
   const collapse = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    expansion.value = withSpring(0, { damping: 28, stiffness: 95, mass: 1 });
+    expansion.value = withSpring(0, { damping: 25, stiffness: 150, mass: 0.5 });
   };
 
   const TAB_BAR_HEIGHT = isWeb ? 84 : (60 + bottomInset);
@@ -196,37 +304,32 @@ export function GlobalPlayer() {
       borderRadius,
       marginHorizontal,
       width: SCREEN_WIDTH - (marginHorizontal * 2),
-      height: SCREEN_HEIGHT,
-      position: 'absolute', pointerEvents: expansion.value > 0.3 ? 'auto' : 'box-none',
+      height: interpolate(expansion.value, [0, 1], [MINI_PLAYER_HEIGHT, SCREEN_HEIGHT], Extrapolation.CLAMP),
+      position: 'absolute',
+      pointerEvents: expansion.value > 0.01 ? 'auto' : 'box-none',
       backgroundColor: 'transparent',
       overflow: 'hidden',
     };
   });
 
   const fullPlayerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(expansion.value, [0.05, 0.25], [0, 1], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(expansion.value, [0, 1], [40, 0], Extrapolation.CLAMP) }],
+    opacity: interpolate(expansion.value, [0, 0.25], [0, 1], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(expansion.value, [0, 1], [60, 0], Extrapolation.CLAMP) }],
     flex: 1,
-    pointerEvents: expansion.value > 0.5 ? 'auto' : 'none',
+    pointerEvents: expansion.value > 0.01 ? 'auto' : 'none',
+  }));
+
+  const artworkScaleStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: interpolate(expansion.value, [0, 1], [0.8, 1], Extrapolation.CLAMP) },
+      { translateY: interpolate(expansion.value, [0, 1], [60, 0], Extrapolation.CLAMP) }
+    ],
+    opacity: interpolate(expansion.value, [0, 1], [0.5, 1], Extrapolation.CLAMP),
   }));
 
   const miniPlayerStyle = useAnimatedStyle(() => ({
     opacity: interpolate(expansion.value, [0, 0.15], [1, 0], Extrapolation.CLAMP),
     pointerEvents: expansion.value < 0.1 ? 'auto' : 'none',
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    height: MINI_PLAYER_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
-    zIndex: 10,
   }));
 
   const swipeDownResponder = React.useRef(
@@ -255,58 +358,66 @@ export function GlobalPlayer() {
     })
   ).current;
 
-  if (!currentTrack) return null;
+  // Hooks must be called unconditionally
+  const quality = useMemo(() =>
+    currentTrack ? getQualityTier(currentTrack.bitrate, currentTrack.format?.toLowerCase()) : 'low' as const
+    , [currentTrack?.bitrate, currentTrack?.format]);
 
-  const quality = getQualityTier(currentTrack.bitrate, currentTrack.format?.toLowerCase());
-  const qualityColor = Colors.quality[quality];
-  const progress = duration > 0 ? (isSeeking ? seekPosition : position) / duration : 0;
-
-  const handleSeekStart = (locationX: number, layoutWidth: number) => {
+  const handleSeekStart = useCallback((locationX: number, layoutWidth: number) => {
+    if (!currentTrack) return;
     setIsSeeking(true);
     const newPos = (locationX / layoutWidth) * duration;
     setSeekPosition(Math.max(0, Math.min(duration, newPos)));
-  };
+  }, [currentTrack, duration]);
 
-  const handleSeekMove = (locationX: number, layoutWidth: number) => {
-    if (!isSeeking) return;
+  const handleSeekMove = useCallback((locationX: number, layoutWidth: number) => {
+    if (!isSeeking || !currentTrack) return;
     const newPos = (locationX / layoutWidth) * duration;
     setSeekPosition(Math.max(0, Math.min(duration, newPos)));
-  };
+  }, [isSeeking, currentTrack, duration]);
 
-  const handleSeekEnd = () => {
-    if (isSeeking) {
+  const handleSeekEnd = useCallback(() => {
+    if (isSeeking && currentTrack) {
       seekTo(seekPosition);
       setIsSeeking(false);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-  };
+  }, [isSeeking, currentTrack, seekPosition, seekTo]);
 
-  const handlePlayPause = () => {
+  const handlePlayPause = useCallback(() => {
+    if (!currentTrack) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     togglePlayPause();
-  };
+  }, [currentTrack, togglePlayPause]);
 
-  const handleSkipNext = () => {
+  const handleSkipNext = useCallback(() => {
+    if (!currentTrack) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     skipNext();
-  };
+  }, [currentTrack, skipNext]);
 
-  const handleSkipPrevious = () => {
+  const handleSkipPrevious = useCallback(() => {
+    if (!currentTrack) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     skipPrevious();
-  };
+  }, [currentTrack, skipPrevious]);
 
-  const handleToggleShuffle = () => {
+  const handleToggleShuffle = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     toggleShuffle();
-  };
+  }, [toggleShuffle]);
 
-  const handleToggleRepeat = () => {
+  const handleToggleRepeat = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     toggleRepeat();
-  };
+  }, [toggleRepeat]);
 
-  const validArtwork = currentTrack?.artwork && !imageError;
+  const validArtwork = useMemo(() => !!(currentTrack?.artwork && !imageError), [currentTrack?.artwork, imageError]);
+
+  if (!currentTrack) return null;
+
+  const qualityColor = Colors.quality[quality as keyof typeof Colors.quality];
+  const progress = duration > 0 ? (isSeeking ? seekPosition : position) / duration : 0;
 
   return (
     <Animated.View style={containerStyle}>
@@ -320,7 +431,7 @@ export function GlobalPlayer() {
       </Animated.View>
 
       {/* MINI PLAYER BAR */}
-      <Animated.View style={miniPlayerStyle}>
+      <Animated.View style={[styles.miniPlayerStatic, miniPlayerStyle]}>
         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(25,25,35,0.9)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }]} />
         <Pressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }} onPress={expand}>
@@ -361,9 +472,14 @@ export function GlobalPlayer() {
             <Text style={styles.topBarTitle}>NOW PLAYING</Text>
             <Text style={styles.topBarSubtitle} numberOfLines={1}>{currentTrack.title}</Text>
           </View>
-          <Pressable hitSlop={12} style={styles.topBarIconRight}>
-            <Ionicons name="menu" size={24} color={Colors.text} />
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Pressable onPress={() => setShowEqualizer(true)} hitSlop={12}>
+              <MaterialCommunityIcons name="equalizer" size={24} color={Colors.text} />
+            </Pressable>
+            <Pressable onPress={() => setShowLyrics(!showLyrics)} hitSlop={12}>
+              <Ionicons name="chatbubbles-outline" size={24} color={showLyrics ? Colors.primary : Colors.text} />
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView
@@ -372,8 +488,8 @@ export function GlobalPlayer() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <View style={styles.artworkSection}>
-            <View style={styles.artworkContainer}>
+          <Animated.View style={[styles.artworkSection, artworkScaleStyle]}>
+            <Animated.View style={[styles.artworkContainer, animatedArtworkContentStyle]}>
               {validArtwork ? (
                 <AnimatedImage
                   // @ts-ignore
@@ -393,8 +509,64 @@ export function GlobalPlayer() {
                   <Ionicons name="musical-note" size={80} color={Colors.textTertiary} />
                 </LinearGradient>
               )}
-            </View>
-          </View>
+            </Animated.View>
+
+            <Animated.View style={[StyleSheet.absoluteFill, styles.lyricsOverlay, animatedLyricsStyle]}>
+              <ScrollView
+                ref={lyricsScrollRef}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[
+                  styles.lyricsScrollContent,
+                  { paddingTop: SCREEN_HEIGHT / 3, paddingBottom: SCREEN_HEIGHT / 2 }
+                ]}
+                snapToInterval={75}
+                decelerationRate="fast"
+                scrollEventThrottle={16}
+              >
+                {lyricsLines && lyricsLines.length > 0 ? (
+                  lyricsLines.map((line, i) => {
+                    const isActive = i === activeLyricIndex;
+                    return (
+                      <View
+                        key={i}
+                        style={{ width: SCREEN_WIDTH - 40, alignItems: 'center', paddingHorizontal: 20 }}
+                        onLayout={(e) => {
+                          lyricLayouts.current[i] = e.nativeEvent.layout.y;
+                        }}
+                      >
+                        <Animated.Text
+                          style={[
+                            styles.lyricsBody,
+                            {
+                              color: isActive ? Colors.primary : '#FFFFFF',
+                              opacity: isActive ? 1 : 0.22,
+                              fontSize: isActive ? 28 : 20,
+                              textAlign: 'center',
+                              marginVertical: 18,
+                              fontFamily: isActive ? 'Inter_800ExtraBold' : 'Inter_600SemiBold',
+                              textShadowColor: 'rgba(0,0,0,0.4)',
+                              textShadowOffset: { width: 0, height: 1 },
+                              textShadowRadius: 4,
+                            }
+                          ]}
+                        >
+                          {line.text}
+                        </Animated.Text>
+                      </View>
+                    );
+                  })
+                ) : (
+                  <View style={styles.emptyLyricsContainer}>
+                    <Ionicons name="mic-outline" size={48} color={Colors.textTertiary} style={{ marginBottom: 16 }} />
+                    <Text style={styles.lyricsHeader}>Testi non disponibili</Text>
+                    <Text style={styles.lyricsBodySmall}>
+                      Non abbiamo trovato testi sincronizzati (.lrc) per questo brano nella tua libreria.
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            </Animated.View>
+          </Animated.View>
 
           <View style={styles.trackInfoSection}>
             <View style={styles.trackTitleRow}>
@@ -403,8 +575,14 @@ export function GlobalPlayer() {
                 <Text style={styles.trackArtist} numberOfLines={1}>{currentTrack.artist}</Text>
               </View>
               <View style={styles.actionIconsRow}>
-                <Ionicons name="information-circle-outline" size={24} color={Colors.tidalGray} />
-                <Ionicons name="heart-outline" size={24} color={Colors.tidalGray} style={{ marginLeft: 16 }} />
+                <Ionicons name="share-outline" size={24} color={Colors.tidalGray} />
+                <Pressable onPress={() => toggleFavorite(currentTrack.id)} hitSlop={15} style={{ marginLeft: 16 }}>
+                  <Ionicons
+                    name={favorites.includes(currentTrack.id) ? "heart" : "heart-outline"}
+                    size={26}
+                    color={favorites.includes(currentTrack.id) ? Colors.primary : Colors.tidalGray}
+                  />
+                </Pressable>
               </View>
             </View>
 
@@ -423,16 +601,16 @@ export function GlobalPlayer() {
           </View>
 
           <View style={styles.progressSection}>
-            <View style={styles.progressBarContainer}>
-              <View
-                style={styles.progressBarBg}
-                onStartShouldSetResponder={() => true}
-                onResponderGrant={(e) => handleSeekStart(e.nativeEvent.locationX, ARTWORK_SIZE)}
-                onResponderMove={(e) => handleSeekMove(e.nativeEvent.locationX, ARTWORK_SIZE)}
-                onResponderRelease={handleSeekEnd}
-              >
-                <View style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: Colors.text }]} />
-                <View style={[styles.progressKnob, { left: `${progress * 100}%`, backgroundColor: Colors.text }]} />
+            <View
+              style={[styles.progressBarContainer, { width: ARTWORK_SIZE }]}
+              onStartShouldSetResponder={() => true}
+              onResponderGrant={(e) => handleSeekStart(e.nativeEvent.locationX, ARTWORK_SIZE)}
+              onResponderMove={(e) => handleSeekMove(e.nativeEvent.locationX, ARTWORK_SIZE)}
+              onResponderRelease={handleSeekEnd}
+            >
+              <View pointerEvents="none" style={styles.progressBarBg}>
+                <View pointerEvents="none" style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: Colors.text }]} />
+                <View pointerEvents="none" style={[styles.progressKnob, { left: `${progress * 100}%`, backgroundColor: Colors.text }]} />
               </View>
             </View>
             <View style={styles.timeRow}>
@@ -620,6 +798,89 @@ export function GlobalPlayer() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Equalizer Modal */}
+      <Modal
+        visible={showEqualizer}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowEqualizer(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setShowEqualizer(false)}>
+          <Pressable style={[styles.modalContent, { height: 'auto' }]} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Audio Equalizer</Text>
+                <Text style={{ color: Colors.primary, fontSize: 12, fontFamily: 'Inter_600SemiBold', marginTop: 4 }}>MASTER ENGINE ACTIVE</Text>
+              </View>
+              <BouncyButton onPress={() => setShowEqualizer(false)} hitSlop={8}>
+                <Ionicons name="close-circle" size={28} color={Colors.surfaceHighlight} />
+              </BouncyButton>
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', height: 200, alignItems: 'flex-end', paddingBottom: 20 }}>
+              {eqLevels.map((val, i) => (
+                <View key={i} style={{ alignItems: 'center', gap: 10 }}>
+                  <View
+                    style={{ height: 140, width: 40, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 6, justifyContent: 'flex-end', overflow: 'hidden' }}
+                    onStartShouldSetResponder={() => true}
+                    onResponderGrant={(e) => {
+                      const newLevels = [...eqLevels];
+                      const touchY = 140 - Math.min(140, Math.max(0, e.nativeEvent.locationY));
+                      newLevels[i] = touchY / 140;
+                      setEqLevels(newLevels);
+                    }}
+                    onResponderMove={(e) => {
+                      const newLevels = [...eqLevels];
+                      const touchY = 140 - Math.min(140, Math.max(0, e.nativeEvent.locationY));
+                      newLevels[i] = touchY / 140;
+                      setEqLevels(newLevels);
+                    }}
+                    onResponderRelease={() => Haptics.selectionAsync()}
+                  >
+                    <View
+                      style={{ height: `${val * 100}%`, backgroundColor: Colors.primary, width: '100%', borderRadius: 6 }}
+                      pointerEvents="none"
+                    />
+                  </View>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 10, fontFamily: 'Inter_500Medium' }}>
+                    {[60, 230, 910, 3000, 7000, 14000][i]}Hz
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, marginBottom: 20 }}>
+              {['Flat', 'Bass Boost', 'Electronic', 'Pop', 'Vocal'].map((preset) => (
+                <Pressable
+                  key={preset}
+                  onPress={() => {
+                    const presets: Record<string, number[]> = {
+                      'Flat': [0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+                      'Bass Boost': [0.9, 0.7, 0.5, 0.4, 0.3, 0.3],
+                      'Electronic': [0.8, 0.6, 0.4, 0.7, 0.8, 0.9],
+                      'Pop': [0.3, 0.5, 0.8, 0.7, 0.5, 0.4],
+                      'Vocal': [0.2, 0.3, 0.7, 0.9, 0.7, 0.4]
+                    };
+                    setEqLevels(presets[preset]);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.1)'
+                  }}
+                >
+                  <Text style={{ color: Colors.text, fontSize: 13, fontFamily: 'Inter_500Medium' }}>{preset}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Custom Animated Toast */}
       <Animated.View style={[styles.toastContainer, animatedToastStyle, { top: topInset + 10 }]}>
         <Ionicons
@@ -634,6 +895,22 @@ export function GlobalPlayer() {
 }
 
 const styles = StyleSheet.create({
+  miniPlayerStatic: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: MINI_PLAYER_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 10,
+  },
   container: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -677,30 +954,35 @@ const styles = StyleSheet.create({
   },
   scrollContentContainer: {
     paddingHorizontal: 24,
+    flexGrow: 1,
   },
   artworkSection: {
+    flex: 1,
     alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 28,
+    justifyContent: 'center',
+    paddingTop: 16,
+    paddingBottom: 24,
   },
   artworkContainer: {
     width: ARTWORK_SIZE,
     height: ARTWORK_SIZE,
-    borderRadius: 8,
-    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.6,
+    shadowOpacity: 0.8,
     shadowRadius: 30,
     elevation: 24,
   },
   artwork: {
     width: ARTWORK_SIZE,
     height: ARTWORK_SIZE,
+    borderRadius: 24,
   },
   artworkPlaceholder: {
     width: ARTWORK_SIZE,
     height: ARTWORK_SIZE,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -762,27 +1044,28 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   progressBarContainer: {
-    paddingVertical: 8,
+    paddingVertical: 12,
   },
   progressBarBg: {
-    height: 3,
+    height: 4,
     backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 1.5,
+    borderRadius: 2,
     position: 'relative',
+    justifyContent: 'center',
   },
   progressBarFill: {
-    height: 3,
+    height: 4,
     backgroundColor: Colors.text,
-    borderRadius: 1.5,
+    borderRadius: 2,
   },
   progressKnob: {
     position: 'absolute',
-    top: -5,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    top: -6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: Colors.text,
-    marginLeft: -7,
+    marginLeft: -8,
   },
   timeRow: {
     flexDirection: 'row',
@@ -979,5 +1262,37 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 15,
     fontFamily: 'Inter_500Medium',
+  },
+  lyricsOverlay: {
+    zIndex: 10,
+    backgroundColor: 'transparent',
+    paddingVertical: 90, // Reduced from 140 for a middle ground
+  },
+  lyricsScrollContent: {
+    alignItems: 'center',
+  },
+  emptyLyricsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: SCREEN_HEIGHT / 4,
+  },
+  lyricsHeader: {
+    color: Colors.text,
+    fontSize: 22,
+    fontFamily: 'Inter_700Bold',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  lyricsBody: {
+    width: '100%',
+  },
+  lyricsBodySmall: {
+    color: Colors.textSecondary,
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    textAlign: 'center',
+    opacity: 0.7,
+    paddingHorizontal: 40,
   },
 });

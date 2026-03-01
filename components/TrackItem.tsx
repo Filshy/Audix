@@ -1,11 +1,12 @@
 import React, { memo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { Track, formatDuration, getQualityTier, getQualityLabel } from '@/lib/types';
+import { useMusic } from '@/lib/music-context';
 
 interface TrackItemProps {
   track: Track;
@@ -17,6 +18,7 @@ interface TrackItemProps {
 }
 
 export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlaying, showIndex, showQuality = true }: TrackItemProps) {
+  const { openTrackOptions, isPlaying: isGlobalPlaying } = useMusic();
   const quality = getQualityTier(track.bitrate, track.format?.toLowerCase());
 
   const scale = useSharedValue(1);
@@ -25,16 +27,17 @@ export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlay
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
     opacity: opacity.value,
+    backgroundColor: withTiming(isPlaying ? Colors.primary + '18' : 'transparent', { duration: 250 }),
   }));
 
   const handlePressIn = () => {
-    scale.value = withSpring(0.95, { damping: 12, stiffness: 400 });
-    opacity.value = withSpring(0.7, { damping: 12, stiffness: 400 });
+    scale.value = withSpring(0.96, { damping: 15, stiffness: 300 });
+    opacity.value = withSpring(0.8, { damping: 15, stiffness: 300 });
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1, { damping: 12, stiffness: 400 });
-    opacity.value = withSpring(1, { damping: 12, stiffness: 400 });
+    scale.value = withSpring(1, { damping: 15, stiffness: 300 });
+    opacity.value = withSpring(1, { damping: 15, stiffness: 300 });
   };
 
   const handlePress = () => {
@@ -52,7 +55,11 @@ export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlay
         {showIndex && (
           <View style={styles.indexContainer}>
             {isPlaying ? (
-              <Ionicons name="musical-note" size={14} color={Colors.primary} />
+              <View style={styles.vContainer}>
+                <VisualizerBar delay={0} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+                <VisualizerBar delay={100} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+                <VisualizerBar delay={200} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+              </View>
             ) : (
               <Text style={styles.indexText}>{(index ?? 0) + 1}</Text>
             )}
@@ -70,7 +77,11 @@ export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlay
             )}
             {isPlaying && (
               <View style={styles.playingOverlay}>
-                <Ionicons name="volume-high" size={14} color={Colors.primary} />
+                <View style={styles.vContainer}>
+                  <VisualizerBar delay={0} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+                  <VisualizerBar delay={100} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+                  <VisualizerBar delay={200} isPlaying={isPlaying} isGlobalPlaying={isGlobalPlaying} />
+                </View>
               </View>
             )}
           </View>
@@ -88,13 +99,18 @@ export const TrackItem = memo(function TrackItem({ track, index, onPress, isPlay
                 </Text>
               </View>
             )}
-            <Text style={styles.artist} numberOfLines={1}>
-              {track.artist}
+            <Text style={[styles.artist, isPlaying && { color: Colors.primary + '99' }]} numberOfLines={1}>
+              {track.artist ? track.artist.split(/[,&;/+]|\bfeat(?:uring)?\.\b|\bfeat\b|\bft\.\b|\bft\b|\bwith\b|\band\b/i)[0].trim() : 'Unknown Artist'}
             </Text>
           </View>
         </View>
 
-        <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+        <View style={styles.rightContent}>
+          <Text style={[styles.duration, isPlaying && { color: Colors.primary + '80' }]}>{formatDuration(track.duration)}</Text>
+          <Pressable hitSlop={15} style={styles.moreBtn} onPress={() => openTrackOptions(track)}>
+            <Ionicons name="ellipsis-vertical" size={18} color={isPlaying ? Colors.primary : Colors.textTertiary} />
+          </Pressable>
+        </View>
       </Animated.View>
     </Pressable>
   );
@@ -107,6 +123,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     gap: 12,
+    height: 70, // Consistent height for FlatList optimization
   },
   pressed: {
     opacity: 0.6,
@@ -182,4 +199,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
   },
+  rightContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  moreBtn: {
+    padding: 4,
+  },
+  vContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    height: 20,
+    justifyContent: 'center',
+  },
+  vBar: {
+    width: 3,
+    borderRadius: 1.5,
+  },
+});
+
+const VisualizerBar = memo(({ delay, isPlaying, isGlobalPlaying }: { delay: number, isPlaying: boolean, isGlobalPlaying: boolean }) => {
+  const height = useSharedValue(4);
+
+  React.useEffect(() => {
+    if (isPlaying && isGlobalPlaying) {
+      height.value = withRepeat(
+        withSequence(
+          withTiming(14 + Math.random() * 6, { duration: 350 + delay }),
+          withTiming(4, { duration: 350 + delay })
+        ),
+        -1,
+        true
+      );
+    } else {
+      height.value = withTiming(isPlaying ? 8 : 4, { duration: 300 });
+    }
+  }, [isPlaying, isGlobalPlaying, delay]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    height: height.value,
+    backgroundColor: Colors.primary,
+  }));
+
+  return <Animated.View style={[styles.vBar, barStyle]} />;
 });

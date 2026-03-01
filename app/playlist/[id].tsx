@@ -29,9 +29,19 @@ export default function PlaylistDetailScreen() {
     const topInset = isWeb ? 67 : insets.top;
     const bottomInset = isWeb ? 34 : insets.bottom;
 
-    const { playlists, currentTrack, playTrack, queue, togglePlayPause } = useMusic();
+    const { playlists, favorites, tracks, currentTrack, playTrack, queue, togglePlayPause } = useMusic();
 
-    const playlist = useMemo(() => playlists.find(p => p.id === id), [playlists, id]);
+    const playlist = useMemo(() => {
+        if (id === 'favorites') {
+            return {
+                id: 'favorites',
+                name: 'Preferiti',
+                tracks: tracks.filter(t => favorites.includes(t.id)),
+                artwork: undefined,
+            };
+        }
+        return playlists.find(p => p.id === id);
+    }, [playlists, id, tracks, favorites]);
 
     const totalDuration = useMemo(() => {
         if (!playlist) return 0;
@@ -94,6 +104,7 @@ export default function PlaylistDetailScreen() {
                     />
                 )}
                 keyExtractor={item => item.id}
+                extraData={currentTrack}
                 scrollEnabled={!!playlist.tracks.length}
                 showsVerticalScrollIndicator={false}
                 initialNumToRender={20}
@@ -113,7 +124,7 @@ export default function PlaylistDetailScreen() {
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 1 }}
                                 >
-                                    <Ionicons name="list" size={60} color={Colors.textTertiary} />
+                                    <Ionicons name={playlist.id === 'favorites' ? 'heart' : 'list'} size={60} color={playlist.id === 'favorites' ? Colors.primary : Colors.textTertiary} />
                                 </LinearGradient>
                             )}
                         </View>

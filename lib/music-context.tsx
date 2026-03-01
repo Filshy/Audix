@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo, ReactNode } from 'react';
-import { Audio } from 'expo-av';
+import TrackPlayer, { State, Capability, Event, useTrackPlayerEvents, AppKilledPlaybackBehavior } from 'react-native-track-player';
 import * as MediaLibrary from 'expo-media-library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, NativeModules } from 'react-native';
 import { Track, Album, Artist, Playlist, RepeatMode, getFormatFromFilename } from './types';
-import MusicInfo from 'expo-music-info-2';
+import { MusicInfo } from './music-info';
 import * as FileSystem from 'expo-file-system/legacy';
 import { cleanTrackTitle } from './utils';
 
@@ -90,6 +90,14 @@ interface MusicContextValue {
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
   deletePlaylist: (playlistId: string) => Promise<void>;
+  activeTrackForOptions: Track | null;
+  openTrackOptions: (track: Track) => void;
+  closeTrackOptions: () => void;
+  favorites: string[];
+  toggleFavorite: (trackId: string) => Promise<void>;
+  customScanPaths: string[];
+  addCustomScanPath: () => Promise<void>;
+  removeCustomScanPath: (path: string) => Promise<void>;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
@@ -97,6 +105,7 @@ const MusicContext = createContext<MusicContextValue | null>(null);
 export function MusicProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -107,35 +116,45 @@ export function MusicProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const [customScanPaths, setCustomScanPaths] = useState<string[]>([]);
   const positionInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const metadataFetchRef = useRef(false);
 
+  // Track Options Menu State
+  const [activeTrackForOptions, setActiveTrackForOptions] = useState<Track | null>(null);
+  const openTrackOptions = useCallback((track: Track) => setActiveTrackForOptions(track), []);
+  const closeTrackOptions = useCallback(() => setActiveTrackForOptions(null), []);
+
   useEffect(() => {
-    const loadPlaylists = async () => {
+    const loadData = async () => {
       try {
-        const stored = await AsyncStorage.getItem('user_playlists_v1');
-        if (stored) {
-          setPlaylists(JSON.parse(stored));
-        }
+        const storedPlaylists = await AsyncStorage.getItem('user_playlists_v1');
+        if (storedPlaylists) setPlaylists(JSON.parse(storedPlaylists));
+
+        const storedFavorites = await AsyncStorage.getItem('user_favorites_v1');
+        if (storedFavorites) setFavorites(JSON.parse(storedFavorites));
+
+        const storedPaths = await AsyncStorage.getItem('custom_scan_paths_v1');
+        if (storedPaths) setCustomScanPaths(JSON.parse(storedPaths));
       } catch (err) {
-        console.error('Failed to load playlists', err);
+        console.error('Failed to load local data', err);
       }
     };
-    loadPlaylists();
+    loadData();
   }, []);
 
   const albums = useMemo(() => {
     const albumMap = new Map<string, Album>();
     tracks.forEach(track => {
       const albumName = track.album || 'Unknown Album';
-      const artistName = track.artist || 'Unknown Artist';
-      const key = `${albumName}-${artistName}`;
+      // Improved primary artist splitting
+      const primaryArtist = track.artist ? track.artist.split(/[,&;/+]|\bfeat(?:uring)?\.\b|\bfeat\b|\bft\.\b|\bft\b|\bwith\b|\band\b/i)[0].trim() || 'Unknown Artist' : 'Unknown Artist';
+      const key = `${albumName}-${primaryArtist}`;
       if (!albumMap.has(key)) {
         albumMap.set(key, {
           id: key,
           name: albumName,
-          artist: artistName,
+          artist: primaryArtist,
           artwork: track.artwork,
           tracks: [],
         });
@@ -151,17 +170,17 @@ export function MusicProvider({ children }: { children: ReactNode }) {
   const artists = useMemo(() => {
     const artistMap = new Map<string, Artist>();
     tracks.forEach(track => {
-      const name = track.artist || 'Unknown Artist';
-      if (!artistMap.has(name)) {
-        artistMap.set(name, {
-          id: name,
-          name: name,
+      const primaryArtist = track.artist ? track.artist.split(/[,&;/+]|\bfeat(?:uring)?\.\b|\bfeat\b|\bft\.\b|\bft\b|\bwith\b|\band\b/i)[0].trim() || 'Unknown Artist' : 'Unknown Artist';
+      if (!artistMap.has(primaryArtist)) {
+        artistMap.set(primaryArtist, {
+          id: primaryArtist,
+          name: primaryArtist,
           artwork: track.artwork,
           albums: [],
           trackCount: 0,
         });
       }
-      artistMap.get(name)!.trackCount++;
+      artistMap.get(primaryArtist)!.trackCount++;
     });
     albums.forEach(album => {
       const artist = artistMap.get(album.artist);
@@ -225,7 +244,6 @@ export function MusicProvider({ children }: { children: ReactNode }) {
           } else {
             for (const t of batch) {
               if (t.uri && !cache[t.id]) {
-                // @ts-ignore - The types for expo-music-info-2 are incorrect, it has this static method
                 const info = await MusicInfo.getMusicInfoAsync(t.uri, {
                   title: true,
                   artist: true,
@@ -251,7 +269,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
                       if (base64Data.length > 100) {
                         await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-                          encoding: FileSystem.EncodingType.Base64,
+                          encoding: 'base64' as any,
                         });
                         const fileInfo = await FileSystem.getInfoAsync(fileUri);
                         if (fileInfo.exists && fileInfo.size && fileInfo.size > 100) {
@@ -308,8 +326,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
           await AsyncStorage.setItem('track_metadata_v11', JSON.stringify(cache));
 
+          // Optimization: Merge batch updates into a single state update at the end of the batch
+          // Actually, keeping the per-batch update is fine for responsiveness, 
+          // but we can make the map more efficient by preparing the batch update first.
+
+          const batchCache = { ...cache };
           setTracks(prev => prev.map(t => {
-            const c = cache[t.id];
+            const c = batchCache[t.id];
             if (c && !c._notFound) {
               const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
               return {
@@ -332,14 +355,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
             return { ...t, metadataFetched: true };
           }));
         } catch (err) {
-          console.warn('Local metadata fetch error:', err);
-          setTracks(prev => prev.map(t => {
-            if (!t.bitrate) {
-              const quality = estimateAudioQuality(t.format || '', t.duration, t.fileSize);
-              return { ...t, bitrate: quality.bitrate, sampleRate: quality.sampleRate, bitDepth: quality.bitDepth, channels: quality.channels };
-            }
-            return t;
-          }));
+          console.warn('Local metadata batch fetch error:', err);
         }
 
         if (i + batchSize < unfetched.length) {
@@ -393,42 +409,105 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const addCustomScanPath = useCallback(async () => {
+    try {
+      const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (permissions.granted) {
+        setCustomScanPaths(prev => {
+          if (prev.includes(permissions.directoryUri)) return prev;
+          const next = [...prev, permissions.directoryUri];
+          AsyncStorage.setItem('custom_scan_paths_v1', JSON.stringify(next));
+          return next;
+        });
+        // Immediately trigger a scan
+        setTimeout(() => scanLibraryInternal(), 500);
+      }
+    } catch (e) {
+      console.warn('SAF error', e);
+    }
+  }, []);
+
+  const removeCustomScanPath = useCallback(async (path: string) => {
+    setCustomScanPaths(prev => {
+      const next = prev.filter(p => p !== path);
+      AsyncStorage.setItem('custom_scan_paths_v1', JSON.stringify(next));
+      return next;
+    });
+    // Immediately trigger a scan
+    setTimeout(() => scanLibraryInternal(), 500);
+  }, []);
+
   const scanLibraryInternal = useCallback(async () => {
     setIsLoading(true);
     try {
-      const media = await MediaLibrary.getAssetsAsync({
-        mediaType: MediaLibrary.MediaType.audio,
-        first: 500,
-        sortBy: [MediaLibrary.SortBy.default],
-      });
+      if (customScanPaths.length > 0) {
+        let allTracks: Track[] = [];
+        for (const dirUri of customScanPaths) {
+          try {
+            const files = await FileSystem.StorageAccessFramework.readDirectoryAsync(dirUri);
+            for (const f of files) {
+              if (f.match(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i) || f.match(/\.(mp3|flac|wav|m4a|aac|ogg|opus)%3A/i) || f.match(/\.(mp3|flac|wav|m4a|aac|ogg|opus)\?/i)) {
+                const filenameRaw = f.split('%2F').pop() || f.split('/').pop() || 'Unknown';
+                const filename = decodeURIComponent(filenameRaw);
+                const format = getFormatFromFilename(filename);
+                allTracks.push({
+                  id: f,
+                  uri: f,
+                  title: filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
+                  artist: '',
+                  album: '',
+                  duration: 0,
+                  format,
+                  filename,
+                  bitrate: 0,
+                  sampleRate: 0,
+                  bitDepth: 0,
+                  channels: 0,
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Error reading custom directory', e);
+          }
+        }
+        setTracks(allTracks);
+        setIsLoading(false);
+        fetchMetadataForTracks(allTracks);
+      } else {
+        const media = await MediaLibrary.getAssetsAsync({
+          mediaType: MediaLibrary.MediaType.audio,
+          first: 1000,
+          sortBy: [MediaLibrary.SortBy.default],
+        });
 
-      const scannedTracks: Track[] = media.assets.map(asset => {
-        const format = getFormatFromFilename(asset.filename);
-        const quality = estimateAudioQuality(format, asset.duration);
-        return {
-          id: asset.id,
-          uri: asset.uri,
-          title: asset.filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
-          artist: '',
-          album: '',
-          duration: asset.duration,
-          format,
-          filename: asset.filename,
-          bitrate: quality.bitrate,
-          sampleRate: quality.sampleRate,
-          bitDepth: quality.bitDepth,
-          channels: quality.channels,
-        };
-      });
+        const scannedTracks: Track[] = media.assets.map(asset => {
+          const format = getFormatFromFilename(asset.filename);
+          const quality = estimateAudioQuality(format, asset.duration);
+          return {
+            id: asset.id,
+            uri: asset.uri,
+            title: asset.filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
+            artist: '',
+            album: '',
+            duration: asset.duration,
+            format,
+            filename: asset.filename,
+            bitrate: quality.bitrate,
+            sampleRate: quality.sampleRate,
+            bitDepth: quality.bitDepth,
+            channels: quality.channels,
+          };
+        });
 
-      setTracks(scannedTracks);
-      setIsLoading(false);
-      fetchMetadataForTracks(scannedTracks);
+        setTracks(scannedTracks);
+        setIsLoading(false);
+        fetchMetadataForTracks(scannedTracks);
+      }
     } catch (err) {
       console.error('Error scanning library:', err);
       setIsLoading(false);
     }
-  }, [fetchMetadataForTracks]);
+  }, [fetchMetadataForTracks, customScanPaths]);
 
   const scanLibrary = useCallback(async () => {
     if (Platform.OS === 'web') {
@@ -458,10 +537,42 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const init = async () => {
-      await Audio.setAudioModeAsync({
-        staysActiveInBackground: true,
-        playsInSilentModeIOS: true,
-      });
+      if (Platform.OS !== 'web') {
+        try {
+          await TrackPlayer.setupPlayer();
+          await TrackPlayer.updateOptions({
+            capabilities: [
+              Capability.Play,
+              Capability.Pause,
+              Capability.SkipToNext,
+              Capability.SkipToPrevious,
+              Capability.Stop,
+              Capability.SeekTo,
+              Capability.JumpForward,
+              Capability.JumpBackward,
+            ],
+            compactCapabilities: [
+              Capability.Play,
+              Capability.Pause,
+              Capability.SkipToNext,
+            ],
+            notificationCapabilities: [
+              Capability.Play,
+              Capability.Pause,
+              Capability.SkipToNext,
+              Capability.SkipToPrevious,
+              Capability.Stop,
+              Capability.SeekTo,
+            ],
+            // Android Specific
+            android: {
+              appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+            },
+          });
+        } catch (e) {
+          console.log('TrackPlayer init error or already initialized', e);
+        }
+      }
 
       if (Platform.OS === 'web') {
         setHasPermission(true);
@@ -503,32 +614,51 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
     return () => {
       if (positionInterval.current) clearInterval(positionInterval.current);
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
-      }
     };
   }, []);
+
+  const skipNextInternal = useCallback(() => {
+    if (queue.length === 0 && tracks.length === 0) return;
+    const list = queue.length > 0 ? queue : tracks;
+    const currentIdx = list.findIndex(t => t.id === currentTrack?.id);
+
+    if (repeatMode === 'one' && currentTrack) {
+      playTrack(currentTrack); // Will restart track
+      return;
+    }
+
+    let nextIdx: number;
+    if (shuffle) {
+      nextIdx = Math.floor(Math.random() * list.length);
+    } else {
+      nextIdx = currentIdx + 1;
+      if (nextIdx >= list.length) {
+        if (repeatMode === 'all') nextIdx = 0;
+        else return;
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    playTrack(list[nextIdx]);
+  }, [queue, tracks, currentTrack, shuffle, repeatMode]);
+
+  useTrackPlayerEvents([Event.PlaybackQueueEnded], async (event) => {
+    if (event.type === Event.PlaybackQueueEnded) {
+      skipNextInternal();
+    }
+  });
 
   const startPositionTracking = useCallback(() => {
     if (positionInterval.current) clearInterval(positionInterval.current);
     positionInterval.current = setInterval(async () => {
-      if (soundRef.current) {
-        const status = await soundRef.current.getStatusAsync();
-        if (status.isLoaded) {
-          setPosition(status.positionMillis / 1000);
-          if (status.didJustFinish) {
-            skipNextInternal();
-          }
-        }
+      if (Platform.OS !== 'web') {
+        const progress = await TrackPlayer.getProgress();
+        setPosition(progress.position);
       }
     }, 250);
   }, []);
 
   const playTrack = useCallback(async (track: Track) => {
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-      }
       if (positionInterval.current) clearInterval(positionInterval.current);
 
       setCurrentTrack(track);
@@ -549,11 +679,16 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: track.uri },
-        { shouldPlay: true }
-      );
-      soundRef.current = sound;
+      await TrackPlayer.reset();
+      await TrackPlayer.add({
+        id: track.id,
+        url: track.uri,
+        title: track.title,
+        artist: track.artist || 'Unknown Artist',
+        artwork: track.artwork || undefined,
+        duration: track.duration,
+      });
+      await TrackPlayer.play();
       setIsPlaying(true);
       startPositionTracking();
     } catch (err) {
@@ -566,49 +701,23 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       setIsPlaying(prev => !prev);
       return;
     }
-    if (!soundRef.current) return;
-    const status = await soundRef.current.getStatusAsync();
-    if (status.isLoaded) {
-      if (status.isPlaying) {
-        await soundRef.current.pauseAsync();
-        setIsPlaying(false);
-      } else {
-        await soundRef.current.playAsync();
-        setIsPlaying(true);
-      }
+    const state = await TrackPlayer.getPlaybackState();
+    if (state.state === State.Playing) {
+      await TrackPlayer.pause();
+      setIsPlaying(false);
+    } else {
+      await TrackPlayer.play();
+      setIsPlaying(true);
     }
   }, [currentTrack]);
 
   const seekTo = useCallback(async (pos: number) => {
     setPosition(pos);
     if (Platform.OS === 'web' && currentTrack && !currentTrack.uri) return;
-    if (soundRef.current) {
-      await soundRef.current.setPositionAsync(pos * 1000);
-    }
+    await TrackPlayer.seekTo(pos);
   }, [currentTrack]);
 
-  const skipNextInternal = useCallback(() => {
-    if (queue.length === 0 && tracks.length === 0) return;
-    const list = queue.length > 0 ? queue : tracks;
-    const currentIdx = list.findIndex(t => t.id === currentTrack?.id);
-
-    if (repeatMode === 'one' && currentTrack) {
-      playTrack(currentTrack);
-      return;
-    }
-
-    let nextIdx: number;
-    if (shuffle) {
-      nextIdx = Math.floor(Math.random() * list.length);
-    } else {
-      nextIdx = currentIdx + 1;
-      if (nextIdx >= list.length) {
-        if (repeatMode === 'all') nextIdx = 0;
-        else return;
-      }
-    }
-    playTrack(list[nextIdx]);
-  }, [queue, tracks, currentTrack, shuffle, repeatMode, playTrack]);
+  // Note: skipNextInternal is defined above
 
   const skipNext = useCallback(() => {
     skipNextInternal();
@@ -803,6 +912,14 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     await savePlaylists(updated);
   }, [playlists]);
 
+  const toggleFavorite = useCallback(async (trackId: string) => {
+    setFavorites(prev => {
+      const next = prev.includes(trackId) ? prev.filter(id => id !== trackId) : [...prev, trackId];
+      AsyncStorage.setItem('user_favorites_v1', JSON.stringify(next)).catch(err => console.error('Failed to save favorites', err));
+      return next;
+    });
+  }, []);
+
   const value = useMemo(() => ({
     tracks,
     albums,
@@ -833,7 +950,15 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     addTrackToPlaylist,
     removeTrackFromPlaylist,
     deletePlaylist,
-  }), [tracks, albums, artists, currentTrack, isPlaying, position, duration, shuffle, repeatMode, queue, isLoading, isFetchingMetadata, hasPermission, requestPermission, playTrack, togglePlayPause, seekTo, skipNext, skipPrevious, toggleShuffle, toggleRepeat, playAlbum, scanLibrary, updateTrackMetadata, playlists, createPlaylist, addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist]);
+    activeTrackForOptions,
+    openTrackOptions,
+    closeTrackOptions,
+    favorites,
+    toggleFavorite,
+    customScanPaths,
+    addCustomScanPath,
+    removeCustomScanPath,
+  }), [tracks, albums, artists, currentTrack, isPlaying, position, duration, shuffle, repeatMode, queue, isLoading, isFetchingMetadata, hasPermission, requestPermission, playTrack, togglePlayPause, seekTo, skipNext, skipPrevious, toggleShuffle, toggleRepeat, playAlbum, scanLibrary, updateTrackMetadata, playlists, createPlaylist, addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist, activeTrackForOptions, openTrackOptions, closeTrackOptions, favorites, toggleFavorite, customScanPaths, addCustomScanPath, removeCustomScanPath]);
 
   return (
     <MusicContext.Provider value={value}>

@@ -10,6 +10,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { MusicProvider } from "@/lib/music-context";
 import { GlobalPlayer } from "@/components/GlobalPlayer";
+import { TrackOptionsModal } from "@/components/TrackOptionsModal";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -32,6 +33,7 @@ function RootLayoutNav() {
         />
       </Stack>
       <GlobalPlayer />
+      <TrackOptionsModal />
     </>
   );
 }

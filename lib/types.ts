@@ -45,7 +45,8 @@ export type RepeatMode = 'off' | 'all' | 'one';
 export type QualityTier = 'lossless' | 'high' | 'standard' | 'low';
 
 export function getQualityTier(bitrate?: number, format?: string): QualityTier {
-  if (format === 'flac' || format === 'alac' || format === 'wav' || format === 'aiff') {
+  const fmt = format?.toLowerCase();
+  if (fmt === 'flac' || fmt === 'alac' || fmt === 'wav' || fmt === 'aiff') {
     return 'lossless';
   }
   if (bitrate && bitrate >= 320) return 'high';

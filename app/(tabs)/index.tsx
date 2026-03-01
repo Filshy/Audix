@@ -50,7 +50,7 @@ export default function LibraryScreen() {
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
 
-  const { tracks, playlists, artists, currentTrack, isPlaying, playTrack, playAlbum, isLoading, scanLibrary, createPlaylist } = useMusic();
+  const { tracks, playlists, artists, favorites, currentTrack, isPlaying, playTrack, playAlbum, isLoading, scanLibrary, createPlaylist } = useMusic();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
@@ -105,6 +105,16 @@ export default function LibraryScreen() {
       }
     });
   }, [tracks, sortOrder]);
+
+  const playlistsData = React.useMemo(() => {
+    const favPlaylist: Playlist = {
+      id: 'favorites',
+      name: 'Preferiti',
+      artwork: undefined,
+      tracks: tracks.filter(t => favorites.includes(t.id))
+    };
+    return [favPlaylist, ...playlists];
+  }, [playlists, tracks, favorites]);
 
   const handleTabChange = (tab: LibraryTab) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -177,10 +187,12 @@ export default function LibraryScreen() {
         <View style={styles.header}>
           <View style={styles.titleRow}>
             <Text style={styles.headerTitle}>{getGreeting()}</Text>
-            <View style={styles.visualizerContainer}>
-              <VisualizerBar delayValue={0} />
-              <VisualizerBar delayValue={150} />
-              <VisualizerBar delayValue={300} />
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={styles.visualizerContainer}>
+                <VisualizerBar delayValue={0} />
+                <VisualizerBar delayValue={150} />
+                <VisualizerBar delayValue={300} />
+              </View>
             </View>
           </View>
           <View style={styles.statsRow}>
@@ -234,18 +246,19 @@ export default function LibraryScreen() {
                 data={sortedTracks}
                 renderItem={renderTrack}
                 keyExtractor={item => item.id}
+                extraData={currentTrack}
                 contentContainerStyle={[styles.listContent, { paddingBottom: currentTrack ? 160 : 100 }]}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={!!tracks.length}
                 initialNumToRender={12}
-                maxToRenderPerBatch={10}
-                windowSize={5}
-                removeClippedSubviews={true}
+                maxToRenderPerBatch={8}
+                windowSize={10}
                 getItemLayout={(data, index) => ({
-                  length: 68,
-                  offset: 68 * index,
+                  length: 70,
+                  offset: 70 * index,
                   index,
                 })}
+                removeClippedSubviews={Platform.OS === 'android'}
                 refreshControl={
                   <RefreshControl
                     refreshing={refreshing}
@@ -267,14 +280,14 @@ export default function LibraryScreen() {
 
             {activeTab === 'playlists' && (
               <FlatList
-                data={playlists}
+                data={playlistsData}
                 renderItem={renderPlaylist}
                 keyExtractor={item => item.id}
                 numColumns={2}
                 columnWrapperStyle={styles.albumGrid}
                 contentContainerStyle={[styles.albumListContent, { paddingBottom: currentTrack ? 160 : 100 }]}
                 showsVerticalScrollIndicator={false}
-                scrollEnabled={!!playlists.length}
+                scrollEnabled={!!playlistsData.length}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={5}
@@ -343,7 +356,6 @@ export default function LibraryScreen() {
             </View>
           </KeyboardAvoidingView>
         </Modal>
-
       </View>
     </PermissionGate>
   );

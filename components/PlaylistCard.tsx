@@ -47,7 +47,7 @@ export const PlaylistCard = memo(function PlaylistCard({ playlist, onPress }: Pl
                         <Image source={{ uri: playlist.artwork }} style={styles.artwork} contentFit="cover" />
                     ) : (
                         <View style={styles.artworkPlaceholder}>
-                            <Ionicons name="list-outline" size={40} color={Colors.textTertiary} />
+                            <Ionicons name={playlist.id === 'favorites' ? 'heart' : 'list-outline'} size={40} color={playlist.id === 'favorites' ? Colors.primary : Colors.textTertiary} />
                         </View>
                     )}
                 </View>
